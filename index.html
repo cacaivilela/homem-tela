@@ -24,6 +24,9 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1
 .row label{font-size:13px}
 .row output{font-variant-numeric:tabular-nums;font-size:12px;color:var(--mute);text-align:right}
 input[type=range]{width:100%;accent-color:var(--accent)}
+.meter{position:relative;height:8px;margin:2px 0 8px;border-radius:4px;background:#1e2329;overflow:hidden}
+#meterBar{height:100%;width:0;background:var(--accent);transition:width .05s linear}
+#meterThr{position:absolute;top:0;bottom:0;width:2px;background:#ff6b6b;left:0}
 .chips{display:flex;flex-wrap:wrap;gap:8px;padding:8px 0;border-top:1px solid var(--line)}
 .chip{border:1px solid var(--line);background:#181c21;color:var(--ink);border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
 .chip[aria-pressed=true]{border-color:var(--accent);color:var(--accent)}
@@ -50,6 +53,8 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <div class="row"><label for="bright">Brilho</label><input id="bright" type="range" min="20" max="100" value="100"><output id="brightO">100</output></div>
     <div class="row"><label for="gap">Espaço entre pixels</label><input id="gap" type="range" min="0" max="45" value="22"><output id="gapO">22</output></div>
     <div class="row"><label for="mic">Sensib. do microfone</label><input id="mic" type="range" min="1" max="10" value="5"><output id="micO">5</output></div>
+    <div class="row"><label for="limiar">Volume mínimo p/ mexer a boca</label><input id="limiar" type="range" min="0" max="80" value="0"><output id="limiarO">0</output></div>
+    <div class="meter" title="Volume do microfone agora"><div id="meterBar"></div><div id="meterThr"></div></div>
     <div class="row"><label for="autoT">Troca automática</label><input id="autoT" type="range" min="3" max="30" value="8"><output id="autoTO">8 s</output></div>
 
     <label class="toggle"><span>Boca segue a voz (microfone)</span><input id="micOn" type="checkbox"></label>
@@ -72,7 +77,7 @@ const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
 const COLS=30;
 let ROWS=19,W=0,H=0,dpr=1;
 
-const S={bright:100,gap:22,mic:5,autoT:8,micOn:false,autoOn:false,blinkOn:true,expr:0};
+const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,micOn:false,autoOn:false,blinkOn:true,expr:0};
 try{Object.assign(S,JSON.parse(localStorage.getItem('homemtela')||'{}'))}catch(e){}
 function save(){try{localStorage.setItem('homemtela',JSON.stringify(S))}catch(e){}}
 
@@ -87,6 +92,10 @@ const EXPR=[
  {id:'triste',nome:'Triste',cor:'#4f7bff',olho:'triste',boca:'triste'},
  {id:'sono',nome:'Sono',cor:'#9aa5ff',olho:'dormindo',boca:'sono'},
  {id:'morto',nome:'Morto',cor:'#d0d4d8',olho:'x',boca:'ondulada'},
+ {id:'assustado',nome:'Assustado',cor:'#e8f4ff',olho:'susto',boca:'grito',tremer:true},
+ {id:'gritando',nome:'Gritando',cor:'#ff3b3b',olho:'apertado',boca:'berro',tremer:true},
+ {id:'nervoso',nome:'Nervoso',cor:'#7fe3c1',olho:'redondo',boca:'zigzag',suor:true},
+ {id:'chocado',nome:'Chocado',cor:'#ffe066',olho:'ponto',boca:'o'},
  {id:'rindo',nome:'Rindo',cor:'#ffca28',emoji:'rindo'},
  {id:'apaixonado2',nome:'Apaixonado emoji',cor:'#ffca28',emoji:'apaixonado2'},
  {id:'bravo2',nome:'Furioso',cor:'#c62828',emoji:'bravo2'},
@@ -172,6 +181,31 @@ const OLHO_DORMINDO=[
  ".##...##.",
  "...###...",
  "........."];
+const OLHO_SUSTO=[
+ "..#####..",
+ ".##...##.",
+ "##.....##",
+ "##..#..##",
+ "##.....##",
+ ".##...##.",
+ "..#####.."];
+const OLHO_APERTADO=[
+ "##.......",
+ "..##.....",
+ "....##...",
+ "......##.",
+ "....##...",
+ "..##.....",
+ "##......."];
+const OLHO_PONTO=[
+ "..#####..",
+ ".........",
+ ".........",
+ "...###...",
+ "...###...",
+ ".........",
+ "........."];
+const GOTA=[".#.","###","###",".#."];
 const LENTE=[
  "############",
  "############",
@@ -200,6 +234,14 @@ function eyes(g,e,blink,dx,dy,t){
   const sx=Math.round(cx-4.5),sy=Math.max(0,Math.round(cy-3.5));
   if(e.olho==='x'){stampAt(g,OLHO_X,sx,sy);continue;}
   if(e.olho==='dormindo'){stampAt(g,OLHO_DORMINDO,sx,sy+2);continue;}
+  if(e.olho==='ponto'){stampAt(g,OLHO_PONTO,sx,sy);continue;}
+  if(e.olho==='apertado'){stampAt(g,side==='L'?OLHO_APERTADO:espelho(OLHO_APERTADO),sx,sy);continue;}
+  if(e.olho==='susto'){
+   for(let x=sx+1;x<=sx+7;x++)put(g,x,Math.max(0,sy-1));            // sobrancelha lá em cima
+   if(closed){for(let x=sx+1;x<=sx+7;x++)put(g,x,sy+4);continue;}
+   stampAt(g,OLHO_SUSTO,sx,sy+1);
+   continue;
+  }
   if(e.olho==='bravo'||e.olho==='triste'){
    if(closed){for(let x=sx+1;x<=sx+7;x++)put(g,x,sy+4);continue;}
    const sp=e.olho==='bravo'?OLHO_BRAVO:OLHO_TRISTE;
@@ -286,6 +328,30 @@ const MF={
  "........###.....",
  "........###.....",
  "................"],
+ grito:[
+ "...##########...",
+ "..#..........#..",
+ ".#............#.",
+ ".#............#.",
+ ".#............#.",
+ "..#..........#..",
+ "...##########..."],
+ berro:[
+ "...##########...",
+ "..#....##....#..",
+ ".#.....##.....#.",
+ ".#............#.",
+ ".#............#.",
+ "..#..........#..",
+ "...##########..."],
+ zigzag:[
+ "................",
+ "................",
+ "...#....#....#..",
+ "..#.#..#.#..#.#.",
+ ".#...##...##...#",
+ "................",
+ "................"],
  o:[
  "................",
  "................",
@@ -307,7 +373,7 @@ function mouth(g,e,open,t){
   stamp(g,MF[k],my);return;
  }
  if(e.boca==='o'){stamp(g,MF.o,my);return;}
- if(e.boca==='bravo'||e.boca==='triste'||e.boca==='ondulada'){stamp(g,MF[e.boca],my);return;}
+ if(e.boca==='bravo'||e.boca==='triste'||e.boca==='ondulada'||e.boca==='grito'||e.boca==='berro'||e.boca==='zigzag'){stamp(g,MF[e.boca],my);return;}
  if(e.boca==='sono'){stamp(g,(Math.floor(t/2600)%3===2)?MF.pequena:MF.fechada,my);return;}
  if(e.boca==='reta'){stamp(g,MF.fechada,my);return;}
  const depth=bottom-top;
@@ -321,7 +387,9 @@ function mouth(g,e,open,t){
 }
 function build(e,blink,open,dx,dy,t){
  if(e.emoji)return buildEmoji(EMOJI[e.emoji],blink,open,dx,dy,t||0);
+ if(e.tremer)dx+=(Math.floor((t||0)/70)%2)?1:-1;                // treme de medo
  const g=grid();eyes(g,e,blink,dx,dy,t);mouth(g,e,open,t||0);
+ if(e.suor){const gy=1+Math.floor(((t||0)/320)%4);stampAt(g,GOTA,Math.round(COLS/2)-1,gy);}  // gota escorrendo
  if(e.olho==='dormindo'){const ph=Math.floor(((t||0)/700)%3);for(let i=0;i<ph;i++)stampAt(g,ZZ,COLS-11+i*5,0);}
  return {g,cols:COLS,rows:ROWS,pal:[null,e.cor]}}
 function buildEmoji(m,blink,open,dx,dy,t){
@@ -366,9 +434,10 @@ function frame(t){
  if(transT<1)transT=Math.min(1,transT+dt/0.22);
  const e=EXPR[cur];
  let open=0;
- if(S.micOn){const lv=level;open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
+ if(S.micOn){const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
  const g=build(e,blink,open,Math.round(driftX),Math.round(driftY),t);
  draw(g,prev,transT);
+ if(!panel.hidden){meterBar.style.width=(level*100)+'%';meterThr.style.left=S.limiar+'%';}
  requestAnimationFrame(frame);
 }
 function draw(cg,pg,tt){
@@ -414,7 +483,7 @@ async function keepAwake(){try{if('wakeLock'in navigator&&!wake){wake=await navi
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')keepAwake()});
 function goFull(){const el=document.documentElement;const f=el.requestFullscreen||el.webkitRequestFullscreen;if(f&&!document.fullscreenElement){try{f.call(el,{navigationUI:'hide'})}catch(e){}}try{screen.orientation&&screen.orientation.lock&&screen.orientation.lock('landscape').catch(()=>{})}catch(e){}keepAwake();}
 
-const panel=document.getElementById('panel'),hint=document.getElementById('hint');
+const panel=document.getElementById('panel'),hint=document.getElementById('hint'),meterBar=document.getElementById('meterBar'),meterThr=document.getElementById('meterThr');
 let pressT=0,pressTimer=null,started=false;
 cv.addEventListener('pointerdown',ev=>{pressT=ev.timeStamp;pressTimer=setTimeout(()=>{pressTimer=null;openPanel()},1000)});
 cv.addEventListener('pointerup',ev=>{
@@ -442,7 +511,7 @@ function syncChips(){[...chips.children].forEach(b=>b.setAttribute('aria-pressed
 syncChips();
 
 function bindRange(id,key,fmt){const el=document.getElementById(id),o=document.getElementById(id+'O');el.value=S[key];o.textContent=fmt(S[key]);el.oninput=()=>{S[key]=+el.value;o.textContent=fmt(S[key]);save();};}
-bindRange('bright','bright',v=>v);bindRange('gap','gap',v=>v);bindRange('mic','mic',v=>v);bindRange('autoT','autoT',v=>v+' s');
+bindRange('bright','bright',v=>v);bindRange('gap','gap',v=>v);bindRange('mic','mic',v=>v);bindRange('limiar','limiar',v=>v);bindRange('autoT','autoT',v=>v+' s');
 function bindCheck(id,key,after){const el=document.getElementById(id);el.checked=S[key];el.onchange=()=>{S[key]=el.checked;save();after&&after();};}
 bindCheck('micOn','micOn',()=>{if(S.micOn)startMic();else level=0;});
 bindCheck('autoOn','autoOn',()=>{autoAt=performance.now()});
