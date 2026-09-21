@@ -54,7 +54,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
 
     <label class="toggle"><span>Boca segue a voz (microfone)</span><input id="micOn" type="checkbox"></label>
     <p class="sub" id="micErr" hidden style="color:#ff6b6b">Sem acesso ao microfone. Libere a permissão no navegador.</p>
-    <label class="toggle"><span>Modo automático (troca sozinho)</span><input id="autoOn" type="checkbox"></label>
+    <label class="toggle"><span>Modo automático (troca sozinho; desliga ao trocar na mão)</span><input id="autoOn" type="checkbox"></label>
     <label class="toggle"><span>Piscar sozinho</span><input id="blinkOn" type="checkbox" checked></label>
 
     <div class="keys">Controle Bluetooth (tipo teclado) ou teclado: <kbd>→</kbd> <kbd>↑</kbd> <kbd>Enter</kbd> <kbd>PgDn</kbd> próxima · <kbd>←</kbd> <kbd>↓</kbd> <kbd>PgUp</kbd> anterior · <kbd>1</kbd>–<kbd>9</kbd> <kbd>0</kbd> direto · toque na metade direita ou esquerda da tela faz o mesmo.</div>
@@ -302,7 +302,7 @@ function build(e,blink,open,dx,dy,t){const g=grid();eyes(g,e,blink,dx,dy,t);mout
  return g}
 
 let cur=S.expr%EXPR.length,prev=null,transT=1,noise=null;
-function setExpr(i,falar){i=(i+EXPR.length)%EXPR.length;if(i===cur)return;prev=build(EXPR[cur],0,0,0,0,performance.now());cur=i;transT=0;noise=new Float32Array(COLS*ROWS).map(Math.random);S.expr=cur;save();syncChips();if(falar!==false)dizer(EXPR[cur].nome);}
+function setExpr(i,falar){i=(i+EXPR.length)%EXPR.length;if(i===cur)return;prev=build(EXPR[cur],0,0,0,0,performance.now());cur=i;transT=0;noise=new Float32Array(COLS*ROWS).map(Math.random);S.expr=cur;syncChips();if(falar!==false){if(S.autoOn){S.autoOn=false;document.getElementById('autoOn').checked=false;}dizer(EXPR[cur].nome);}save();}
 const next=()=>setExpr(cur+1),back=()=>setExpr(cur-1);
 let vozPt=null;
 function acharVoz(){if(!('speechSynthesis'in window))return;const vs=speechSynthesis.getVoices();vozPt=vs.find(v=>/^pt[-_]BR/i.test(v.lang))||vs.find(v=>/^pt/i.test(v.lang))||null;}
