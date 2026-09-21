@@ -6,12 +6,12 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1
 #stage{position:absolute;inset:0;width:100%;height:100%;display:block;background:#000}
 #hint{position:absolute;left:0;right:0;bottom:calc(14px + env(safe-area-inset-bottom,0px));text-align:center;color:var(--mute);font-size:13px;letter-spacing:.04em;pointer-events:none;transition:opacity .6s}
 #hint.gone{opacity:0}
-#panel{position:absolute;inset:0;background:rgba(0,0,0,.86);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}
+#panel{position:absolute;left:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));width:min(340px,calc(100% - 20px));max-height:min(70vh,calc(100% - 20px));display:flex;box-sizing:border-box}
 #panel[hidden]{display:none}
-#panel .card{width:min(100%,460px);max-height:100%;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px 22px;box-sizing:border-box}
+#panel .card{width:100%;max-height:100%;overflow:auto;background:rgba(17,20,23,.92);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:14px;padding:14px 16px 16px;box-sizing:border-box}
 #panel h1{font-size:18px;font-weight:500;margin:0 0 2px}
 #panel .sub{color:var(--mute);font-size:12px;margin:0 0 14px}
-.row{display:grid;grid-template-columns:120px 1fr 44px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
+.row{display:grid;grid-template-columns:110px 1fr 40px;gap:10px;align-items:center;padding:8px 0;border-top:1px solid var(--line)}
 .row label{font-size:13px}
 .row output{font-variant-numeric:tabular-nums;font-size:12px;color:var(--mute);text-align:right}
 input[type=range]{width:100%;accent-color:var(--accent)}
@@ -34,7 +34,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
 <div id="panel" hidden>
   <div class="card" role="dialog" aria-label="Ajustes">
     <h1>Homem Tela</h1>
-    <p class="sub">Ajustes do rosto. Segure a tela por 1 s para abrir de novo.</p>
+    <p class="sub">Toque no rosto para trocar expressão. Segure 1 s para abrir de novo.</p>
 
     <div class="chips" id="chips" role="group" aria-label="Expressão"></div>
 
@@ -44,6 +44,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <div class="row"><label for="autoT">Troca automática</label><input id="autoT" type="range" min="3" max="30" value="8"><output id="autoTO">8 s</output></div>
 
     <label class="toggle"><span>Boca segue a voz (microfone)</span><input id="micOn" type="checkbox"></label>
+    <p class="sub" id="micErr" hidden style="color:#ff6b6b">Sem acesso ao microfone. Libere a permissão no navegador.</p>
     <label class="toggle"><span>Modo automático (troca sozinho)</span><input id="autoOn" type="checkbox"></label>
     <label class="toggle"><span>Piscar sozinho</span><input id="blinkOn" type="checkbox" checked></label>
 
@@ -70,11 +71,10 @@ const EXPR=[
  {id:'feliz',nome:'Feliz',cor:'#4fd8ff',olho:'redondo',boca:'sorriso'},
  {id:'apaixonado',nome:'Apaixonado',cor:'#ff4d6d',olho:'coracao',boca:'sorriso'},
  {id:'legal',nome:'Legal',cor:'#5cf27a',olho:'oculos',boca:'sorriso'},
- {id:'surpreso',nome:'Surpreso',cor:'#ffd23f',olho:'anel',boca:'aberta'},
+ {id:'surpreso',nome:'Surpreso',cor:'#ffd23f',olho:'arregalado',boca:'o'},
  {id:'piscando',nome:'Piscando',cor:'#c77dff',olho:'piscada',boca:'sorriso'},
  {id:'neutro',nome:'Neutro',cor:'#4fd8ff',olho:'redondo',boca:'reta'}
 ];
-const fim=n=>({a:0,b:0,c:0});
 
 function resize(){
  dpr=Math.min(window.devicePixelRatio||1,3);
@@ -99,7 +99,7 @@ function heart(g,cx,cy,s){
   if(a*a*a-px*px*py*py*py<=0)g[y][x]=1;
  }
 }
-function eyes(g,e,blink,dx,dy){
+function eyes(g,e,blink,dx,dy,t){
  const top=0,eh=Math.round(ROWS*0.5),ew=8;
  const cy=top+eh/2+dy,ryFull=eh/2;
  const ry=Math.max(0.6,ryFull*(1-blink));
@@ -113,37 +113,98 @@ function eyes(g,e,blink,dx,dy){
  for(const [cx,side] of [[L,'L'],[R,'R']]){
   if(closed||(e.olho==='piscada'&&side==='R')){for(let x=Math.round(cx-4);x<=Math.round(cx+3);x++){put(g,x,Math.round(cy));put(g,x,Math.round(cy)-1)}continue;}
   if(e.olho==='coracao'){heart(g,cx,cy,4.2*(1-blink*0.8));continue;}
-  if(e.olho==='anel'){ellipse(g,cx,cy,4.2,ry,false,.45);ellipse(g,cx,cy,1.4,Math.min(1.4,ry),true);continue;}
+  if(e.olho==='arregalado'){
+   const pul=1+0.08*Math.sin((t||0)/140);
+   ellipse(g,cx,cy+0.5,3.6*pul,Math.min(ry,ryFull*0.85)*pul,true);
+   if(blink<0.3){const hx=Math.round(cx-1),hy=Math.round(cy-ryFull*0.4);if(hy>=0)for(let k=0;k<2;k++)if(g[hy+k]){g[hy+k][hx]=0;g[hy+k][hx+1]=0;}}
+   const by=Math.max(0,Math.round(cy-ryFull-1));for(let x=Math.round(cx-3);x<=Math.round(cx+3);x++)put(g,x,by);
+   continue;
+  }
   ellipse(g,cx,cy,4,ry,true);
   if(blink<0.3){const hx=Math.round(cx-1.5),hy=Math.round(cy-ry*0.45);if(hy>=0&&hx>=0&&hx<COLS){g[hy][hx]=0;g[hy][hx+1]=0;g[hy+1]&&(g[hy+1][hx]=0);}}
  }
 }
-function mouth(g,e,open){
- const bottom=ROWS-1,top=Math.round(ROWS*0.55);
- if(e.boca==='aberta'||open>0.12){
-  const o=e.boca==='aberta'?1:open;
-  const h=Math.max(1.5,(bottom-top)*0.5*o+1),cy=bottom-h;
-  ellipse(g,COLS/2,cy,6+3*o,h,false,.4);return;
+const MF={
+ fechada:[
+ "................",
+ "................",
+ "................",
+ "...##########...",
+ "...##########...",
+ "................",
+ "................"],
+ pequena:[
+ "................",
+ "................",
+ ".....######.....",
+ "....########....",
+ "....########....",
+ ".....######.....",
+ "................"],
+ media:[
+ "................",
+ "....########....",
+ "...##########...",
+ "...##########...",
+ "...##########...",
+ "...##########...",
+ "....########...."],
+ larga:[
+ "...##########...",
+ "..############..",
+ "..#..........#..",
+ "..############..",
+ "..############..",
+ "...##########...",
+ "....########...."],
+ ee:[
+ "................",
+ "................",
+ "..############..",
+ "..#..........#..",
+ "..############..",
+ "................",
+ "................"],
+ o:[
+ "................",
+ ".....######.....",
+ "....##....##....",
+ "....##....##....",
+ "....##....##....",
+ ".....######.....",
+ "................"]
+};
+function stamp(g,fr,cy){const w=fr[0].length,x0=Math.round(COLS/2-w/2);for(let r=0;r<fr.length;r++)for(let c=0;c<w;c++)if(fr[r][c]==='#')put(g,x0+c,cy+r);}
+const FALA=['fechada','pequena','media','larga'];
+let falaAlt=0,falaAltT=0;
+function mouth(g,e,open,t){
+ const bottom=ROWS-1,top=Math.round(ROWS*0.55),my=bottom-6;
+ if(open>0){
+  let k=FALA[Math.min(3,open)];
+  if(open>=3){if(t-falaAltT>90){falaAltT=t;falaAlt=Math.random()<.35?1:0;}if(falaAlt)k='ee';}
+  else if(open===2&&falaAlt)k='media';
+  stamp(g,MF[k],my);return;
  }
- if(e.boca==='reta'){for(let x=8;x<COLS-8;x++){put(g,x,bottom-2);put(g,x,bottom-3)}return;}
+ if(e.boca==='o'){stamp(g,MF.o,my);return;}
+ if(e.boca==='reta'){stamp(g,MF.fechada,my);return;}
  const depth=bottom-top;
  for(let x=0;x<COLS;x++){
-  const t=(x+.5-COLS/2)/(COLS/2);
-  const y=top+depth*(1-t*t*t*t*0.95);
+  const tt=(x+.5-COLS/2)/(COLS/2);
+  const y=top+depth*(1-tt*tt*tt*tt*0.95);
   for(let k=0;k<2;k++){put(g,x,Math.round(y)-k);}
   if(x===0||x===COLS-1||x===1||x===COLS-2){for(let yy=Math.round(y)-2;yy>=top;yy--)put(g,x,yy);}
  }
  for(let x=2;x<COLS-2;x++)for(let y=bottom;y>bottom-2;y--)if(Math.abs(x+.5-COLS/2)<COLS*0.32)put(g,x,y);
 }
-function build(e,blink,open,dx,dy){const g=grid();eyes(g,e,blink,dx,dy);mouth(g,e,open);return g}
+function build(e,blink,open,dx,dy,t){const g=grid();eyes(g,e,blink,dx,dy,t);mouth(g,e,open,t||0);return g}
 
 let cur=S.expr%EXPR.length,prev=null,transT=1,noise=null;
-function setExpr(i){if(i===cur)return;prev=build(EXPR[cur],0,0,0,0);cur=(i+EXPR.length)%EXPR.length;transT=0;noise=new Float32Array(COLS*ROWS).map(Math.random);S.expr=cur;save();syncChips();}
+function setExpr(i){if(i===cur)return;prev=build(EXPR[cur],0,0,0,0,performance.now());cur=(i+EXPR.length)%EXPR.length;transT=0;noise=new Float32Array(COLS*ROWS).map(Math.random);S.expr=cur;save();syncChips();}
 const next=()=>setExpr(cur+1),back=()=>setExpr(cur-1);
 
 let blink=0,nextBlink=performance.now()+2500,blinkStart=0;
 let driftX=0,driftY=0,driftTX=0,driftTY=0,nextDrift=0;
-let level=0,autoAt=performance.now();
+let level=0,mouthK=0,autoAt=performance.now();
 let lastT=performance.now();
 
 function frame(t){
@@ -155,7 +216,9 @@ function frame(t){
  if(S.autoOn&&t-autoAt>S.autoT*1000){autoAt=t;next();}
  if(transT<1)transT=Math.min(1,transT+dt/0.22);
  const e=EXPR[cur];
- const g=build(e,blink,S.micOn?level:0,Math.round(driftX),Math.round(driftY));
+ let open=0;
+ if(S.micOn){const lv=level;open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
+ const g=build(e,blink,open,Math.round(driftX),Math.round(driftY),t);
  draw(g,e.cor,prev,transT);
  requestAnimationFrame(frame);
 }
@@ -178,13 +241,23 @@ requestAnimationFrame(frame);
 
 let audio=null,analyser=null,buf=null;
 async function startMic(){
- if(audio)return;
+ if(audio){audio.resume&&audio.resume();return;}
  try{
-  const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:true}});
-  audio=new (window.AudioContext||window.webkitAudioContext)();
-  const src=audio.createMediaStreamSource(stream);analyser=audio.createAnalyser();analyser.fftSize=512;analyser.smoothingTimeConstant=0.6;src.connect(analyser);buf=new Uint8Array(analyser.fftSize);
-  (function poll(){if(!analyser)return;analyser.getByteTimeDomainData(buf);let s=0;for(let i=0;i<buf.length;i++){const v=(buf[i]-128)/128;s+=v*v;}const rms=Math.sqrt(s/buf.length);const target=Math.min(1,rms*S.mic*2.2);level+=(target-level)*(target>level?0.6:0.25);requestAnimationFrame(poll);})();
- }catch(err){S.micOn=false;document.getElementById('micOn').checked=false;save();alert('Não consegui acessar o microfone. Verifique a permissão do navegador.');}
+  const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,latency:0}});
+  audio=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+  const src=audio.createMediaStreamSource(stream);analyser=audio.createAnalyser();analyser.fftSize=256;src.connect(analyser);buf=new Float32Array(analyser.fftSize);
+  let floor=0.02,last=performance.now();
+  (function poll(){
+   if(!analyser)return;
+   const now=performance.now(),dt=Math.min(.1,(now-last)/1000);last=now;
+   analyser.getFloatTimeDomainData(buf);let s=0;for(let i=0;i<buf.length;i++)s+=buf[i]*buf[i];const rms=Math.sqrt(s/buf.length);
+   floor+=(rms-floor)*(rms<floor?0.05:0.002);
+   const sig=Math.max(0,rms-floor*2.5),gain=S.mic*S.mic*1.4;
+   const target=Math.min(1,sig*gain);
+   if(target>level)level=target;else level=Math.max(target,level-dt*7);
+   setTimeout(poll,16);
+  })();
+ }catch(err){S.micOn=false;document.getElementById('micOn').checked=false;save();document.getElementById('micErr').hidden=false;}
 }
 
 let wake=null;
