@@ -216,8 +216,15 @@ function mouth(g,e,open,t){
 function build(e,blink,open,dx,dy,t){const g=grid();eyes(g,e,blink,dx,dy,t);mouth(g,e,open,t||0);return g}
 
 let cur=S.expr%EXPR.length,prev=null,transT=1,noise=null;
-function setExpr(i){if(i===cur)return;prev=build(EXPR[cur],0,0,0,0,performance.now());cur=(i+EXPR.length)%EXPR.length;transT=0;noise=new Float32Array(COLS*ROWS).map(Math.random);S.expr=cur;save();syncChips();}
+function setExpr(i,falar){i=(i+EXPR.length)%EXPR.length;if(i===cur)return;prev=build(EXPR[cur],0,0,0,0,performance.now());cur=i;transT=0;noise=new Float32Array(COLS*ROWS).map(Math.random);S.expr=cur;save();syncChips();if(falar!==false)dizer(EXPR[cur].nome);}
 const next=()=>setExpr(cur+1),back=()=>setExpr(cur-1);
+let vozPt=null;
+function acharVoz(){if(!('speechSynthesis'in window))return;const vs=speechSynthesis.getVoices();vozPt=vs.find(v=>/^pt[-_]BR/i.test(v.lang))||vs.find(v=>/^pt/i.test(v.lang))||null;}
+if('speechSynthesis'in window){acharVoz();speechSynthesis.onvoiceschanged=acharVoz;}
+function dizer(txt){
+ if(!('speechSynthesis'in window))return;
+ try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(txt);u.lang='pt-BR';if(vozPt)u.voice=vozPt;u.rate=1.1;u.volume=1;speechSynthesis.speak(u);}catch(e){}
+}
 
 let blink=0,nextBlink=performance.now()+2500,blinkStart=0;
 let driftX=0,driftY=0,driftTX=0,driftTY=0,nextDrift=0;
@@ -230,7 +237,7 @@ function frame(t){
  const bt=(t-blinkStart)/220;blink=bt<1?Math.sin(bt*Math.PI):0;
  if(t>nextDrift){nextDrift=t+1500+Math.random()*3000;driftTX=Math.random()<.5?0:(Math.random()<.5?-1:1);driftTY=Math.random()<.7?0:1;}
  driftX+=(driftTX-driftX)*Math.min(1,dt*6);driftY+=(driftTY-driftY)*Math.min(1,dt*6);
- if(S.autoOn&&t-autoAt>S.autoT*1000){autoAt=t;next();}
+ if(S.autoOn&&t-autoAt>S.autoT*1000){autoAt=t;setExpr(cur+1,false);}
  if(transT<1)transT=Math.min(1,transT+dt/0.22);
  const e=EXPR[cur];
  let open=0;
