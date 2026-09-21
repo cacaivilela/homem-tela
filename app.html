@@ -68,7 +68,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <div class="row"><label for="sfxVol">Volume dos efeitos</label><input id="sfxVol" type="range" min="0" max="100" value="70"><output id="sfxVolO">70</output></div>
     <button class="btn" id="sfxTest" type="button" style="flex:none;width:100%;margin:2px 0 6px">Testar som da expressão atual</button>
     <label class="toggle"><span>Modo automático (troca sozinho; desliga ao trocar na mão)</span><input id="autoOn" type="checkbox"></label>
-    <label class="toggle"><span>Chacoalhar o celular troca de cara</span><input id="shakeOn" type="checkbox"></label>
+    <label class="toggle"><span>Chacoalhar o celular troca de cara (pra direita = próxima, pra esquerda = anterior)</span><input id="shakeOn" type="checkbox"></label>
     <p class="sub" id="shakeErr" hidden style="color:#ff6b6b">Sem acesso ao sensor de movimento.</p>
     <label class="toggle"><span>Falar o nome da expressão ao trocar</span><input id="falarNome" type="checkbox"></label>
     <label class="toggle"><span>Piscar sozinho</span><input id="blinkOn" type="checkbox" checked></label>
@@ -589,15 +589,17 @@ cv.addEventListener('pointerup',ev=>{
 cv.addEventListener('pointercancel',()=>{p0=null;dedo=null;arrastou=false;if(pressTimer){clearTimeout(pressTimer);pressTimer=null}});
 
 // ---- chacoalhar troca de cara ----
-let shakeLast=0,shakeAcc=null,shakeBound=false;
+// chacoalhada pra direita = próxima, pra esquerda = anterior (no sentido da tela, que fica deitada)
+let shakeLast=0,shakeBound=false,gx=0,gy=0;
 function onMotion(ev){
  if(!S.shakeOn)return;
- const a=ev.accelerationIncludingGravity;if(!a)return;
- const m=Math.hypot(a.x||0,a.y||0,a.z||0);
- if(shakeAcc===null)shakeAcc=m;
- const d=Math.abs(m-shakeAcc);shakeAcc+=(m-shakeAcc)*.1;
+ let ax,ay;
+ if(ev.acceleration&&ev.acceleration.x!==null){ax=ev.acceleration.x||0;ay=ev.acceleration.y||0;}
+ else{const g=ev.accelerationIncludingGravity;if(!g)return;gx+=((g.x||0)-gx)*.1;gy+=((g.y||0)-gy)*.1;ax=(g.x||0)-gx;ay=(g.y||0)-gy;}   // tira a gravidade na mão
+ const ang=(screen.orientation&&screen.orientation.angle)??window.orientation??0;
+ const sx=ang===90?-ay:ang===270||ang===-90?ay:ang===180?-ax:ax;   // aceleração no eixo "direita da tela"
  const now=performance.now();
- if(d>14&&now-shakeLast>900){shakeLast=now;next();}
+ if(Math.abs(sx)>12&&now-shakeLast>900){shakeLast=now;if(sx>0)next();else back();}
 }
 async function startShake(){
  try{
