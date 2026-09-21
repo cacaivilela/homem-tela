@@ -48,7 +48,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <label class="toggle"><span>Modo automático (troca sozinho)</span><input id="autoOn" type="checkbox"></label>
     <label class="toggle"><span>Piscar sozinho</span><input id="blinkOn" type="checkbox" checked></label>
 
-    <div class="keys">Botão Bluetooth ou teclado: <kbd>→</kbd> <kbd>Enter</kbd> <kbd>Vol+</kbd> próxima · <kbd>←</kbd> <kbd>Vol−</kbd> anterior · <kbd>1</kbd>–<kbd>6</kbd> direto · toque na metade direita ou esquerda da tela faz o mesmo.</div>
+    <div class="keys">Controle Bluetooth (tipo teclado) ou teclado: <kbd>→</kbd> <kbd>↑</kbd> <kbd>Enter</kbd> <kbd>PgDn</kbd> próxima · <kbd>←</kbd> <kbd>↓</kbd> <kbd>PgUp</kbd> anterior · <kbd>1</kbd>–<kbd>6</kbd> direto · toque na metade direita ou esquerda da tela faz o mesmo.</div>
 
     <div class="actions">
       <button class="btn" id="fsBtn" type="button">Tela cheia</button>
@@ -301,8 +301,8 @@ cv.addEventListener('pointercancel',()=>{if(pressTimer){clearTimeout(pressTimer)
 window.addEventListener('keydown',ev=>{
  if(!panel.hidden)return;
  const k=ev.key;
- if(k==='ArrowRight'||k==='Enter'||k===' '||k==='AudioVolumeUp'||k==='PageDown'||k==='MediaTrackNext'){ev.preventDefault();next();}
- else if(k==='ArrowLeft'||k==='AudioVolumeDown'||k==='PageUp'||k==='MediaTrackPrevious'){ev.preventDefault();back();}
+ if(k==='ArrowRight'||k==='ArrowUp'||k==='Enter'||k===' '||k==='AudioVolumeUp'||k==='PageDown'||k==='MediaTrackNext'){ev.preventDefault();next();}
+ else if(k==='ArrowLeft'||k==='ArrowDown'||k==='AudioVolumeDown'||k==='PageUp'||k==='MediaTrackPrevious'){ev.preventDefault();back();}
  else if(/^[1-9]$/.test(k)&&+k<=EXPR.length){setExpr(+k-1);}
  else if(k==='Escape'||k==='s'){openPanel();}
 });
