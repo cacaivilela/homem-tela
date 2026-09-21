@@ -59,6 +59,9 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
 
     <label class="toggle"><span>Boca segue a voz (microfone)</span><input id="micOn" type="checkbox"></label>
     <p class="sub" id="micErr" hidden style="color:#ff6b6b">Sem acesso ao microfone. Libere a permissão no navegador.</p>
+    <label class="toggle"><span>Efeitos sonoros (falar faz um barulho que muda com a expressão)</span><input id="sfxOn" type="checkbox"></label>
+    <div class="row"><label for="sfxVol">Volume dos efeitos</label><input id="sfxVol" type="range" min="0" max="100" value="70"><output id="sfxVolO">70</output></div>
+    <button class="btn" id="sfxTest" type="button" style="flex:none;width:100%;margin:2px 0 6px">Testar som da expressão atual</button>
     <label class="toggle"><span>Modo automático (troca sozinho; desliga ao trocar na mão)</span><input id="autoOn" type="checkbox"></label>
     <label class="toggle"><span>Piscar sozinho</span><input id="blinkOn" type="checkbox" checked></label>
 
@@ -77,7 +80,7 @@ const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
 const COLS=30;
 let ROWS=19,W=0,H=0,dpr=1;
 
-const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,micOn:false,autoOn:false,blinkOn:true,expr:0};
+const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:false,autoOn:false,blinkOn:true,expr:0};
 try{Object.assign(S,JSON.parse(localStorage.getItem('homemtela')||'{}'))}catch(e){}
 function save(){try{localStorage.setItem('homemtela',JSON.stringify(S))}catch(e){}}
 
@@ -435,6 +438,11 @@ function frame(t){
  const e=EXPR[cur];
  let open=0;
  if(S.micOn){const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
+ if(S.sfxOn&&S.micOn){
+  if(open===0){if(!quietAt)quietAt=t;}
+  else if(quietAt&&t-quietAt>200&&t>sfxUntil){sfxUntil=t+playSfx(e)+300;quietAt=0;}
+  else if(quietAt&&t<=sfxUntil)quietAt=0;
+ }
  const g=build(e,blink,open,Math.round(driftX),Math.round(driftY),t);
  draw(g,prev,transT);
  if(!panel.hidden){meterBar.style.width=(level*100)+'%';meterThr.style.left=S.limiar+'%';}
@@ -478,6 +486,51 @@ async function startMic(){
  }catch(err){S.micOn=false;document.getElementById('micOn').checked=false;save();document.getElementById('micErr').hidden=false;}
 }
 
+// ---- efeitos sonoros (sintetizados com WebAudio, sem arquivos) ----
+let sfxCtx=null,sfxGain=null;
+function sfxAC(){
+ if(!sfxCtx){sfxCtx=new (window.AudioContext||window.webkitAudioContext)();sfxGain=sfxCtx.createGain();sfxGain.connect(sfxCtx.destination);}
+ if(sfxCtx.state==='suspended')sfxCtx.resume();
+ sfxGain.gain.value=S.sfxVol/100;
+ return sfxCtx;
+}
+function tone(o){
+ const ac=o.ac,osc=ac.createOscillator(),g=ac.createGain(),s=ac.currentTime+(o.t||0),d=o.dur||.2,f0=o.f0||440,f1=o.f1||f0,v=o.vol||.4;
+ osc.type=o.type||'sine';osc.frequency.setValueAtTime(f0,s);osc.frequency.exponentialRampToValueAtTime(Math.max(20,f1),s+d);
+ g.gain.setValueAtTime(0.0001,s);g.gain.exponentialRampToValueAtTime(v,s+0.02);g.gain.exponentialRampToValueAtTime(0.0001,s+d);
+ osc.connect(g).connect(sfxGain);osc.start(s);osc.stop(s+d+0.05);
+}
+function ruido(o){
+ const ac=o.ac,s=ac.currentTime+(o.t||0),d=o.dur||.3,n=ac.createBufferSource(),b=ac.createBuffer(1,Math.ceil(ac.sampleRate*d),ac.sampleRate),dat=b.getChannelData(0);
+ for(let i=0;i<dat.length;i++)dat[i]=Math.random()*2-1;
+ n.buffer=b;const f=ac.createBiquadFilter();f.type='lowpass';f.frequency.value=o.f||1000;const g=ac.createGain();
+ g.gain.setValueAtTime(o.vol||.3,s);g.gain.exponentialRampToValueAtTime(0.0001,s+d);
+ n.connect(f).connect(g).connect(sfxGain);n.start(s);n.stop(s+d);
+}
+// cada função toca o efeito e devolve a duração em ms
+const SFX={
+ feliz:a=>{tone({...a,f0:523,f1:659,dur:.12});tone({...a,f0:784,f1:1046,t:.13,dur:.18});return 350;},
+ apaixonado:a=>{tone({...a,f0:600,f1:1400,dur:.35});tone({...a,f0:1400,f1:900,t:.35,dur:.2,vol:.3});return 600;},
+ legal:a=>{tone({...a,type:'sawtooth',f0:220,f1:180,dur:.35,vol:.25});tone({...a,type:'sawtooth',f0:180,f1:150,t:.35,dur:.3,vol:.2});return 700;},
+ surpreso:a=>{tone({...a,type:'square',f0:300,f1:900,dur:.25,vol:.25});return 300;},
+ piscando:a=>{tone({...a,f0:1800,f1:2400,dur:.15,vol:.35});return 200;},
+ neutro:a=>{tone({...a,type:'square',f0:200,dur:.25,vol:.15});return 300;},
+ bravo:a=>{for(let i=0;i<8;i++)tone({...a,type:'sawtooth',f0:90+(i%2)*20,f1:70,t:i*.07,dur:.08});return 650;},
+ triste:a=>{tone({...a,type:'triangle',f0:400,f1:300,dur:.3});tone({...a,type:'triangle',f0:320,f1:200,t:.35,dur:.5});return 900;},
+ sono:a=>{ruido({...a,dur:.6,vol:.25,f:400});tone({...a,type:'sawtooth',f0:70,f1:60,dur:.6,vol:.2});return 800;},
+ morto:a=>{tone({...a,f0:1000,dur:.9,vol:.3});return 1000;},
+ assustado:a=>{for(let i=0;i<10;i++)tone({...a,f0:900+(i%2)*200,t:i*.05,dur:.05,vol:.3});return 550;},
+ gritando:a=>{tone({...a,type:'sawtooth',f0:500,f1:1500,dur:.5});ruido({...a,dur:.5,vol:.3,f:3000});return 550;},
+ nervoso:a=>{for(let i=0;i<6;i++)tone({...a,type:'square',f0:1200+Math.random()*600,t:i*.09,dur:.04,vol:.2});return 550;},
+ chocado:a=>{tone({...a,type:'sawtooth',f0:110,f1:80,dur:.3});tone({...a,type:'sawtooth',f0:110,f1:80,t:.4,dur:.6});return 1000;},
+ rindo:a=>{for(let i=0;i<4;i++)tone({...a,type:'triangle',f0:500-i*40,f1:380-i*40,t:i*.16,dur:.12});return 700;},
+ festa:a=>{tone({...a,type:'sawtooth',f0:300,f1:600,dur:.4,vol:.35});tone({...a,type:'sawtooth',f0:450,f1:900,dur:.4,vol:.25});ruido({...a,dur:.4,vol:.15,f:5000});return 500;}
+};
+function playSfx(e){
+ try{const ac=sfxAC();const k=e.som||e.id.replace(/(2|16)$/,'');return (SFX[k]||SFX.neutro)({ac});}catch(err){return 300;}
+}
+let quietAt=performance.now(),sfxUntil=0;
+
 let wake=null;
 async function keepAwake(){try{if('wakeLock'in navigator&&!wake){wake=await navigator.wakeLock.request('screen');wake.addEventListener('release',()=>{wake=null});}}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')keepAwake()});
@@ -514,6 +567,9 @@ function bindRange(id,key,fmt){const el=document.getElementById(id),o=document.g
 bindRange('bright','bright',v=>v);bindRange('gap','gap',v=>v);bindRange('mic','mic',v=>v);bindRange('limiar','limiar',v=>v);bindRange('autoT','autoT',v=>v+' s');
 function bindCheck(id,key,after){const el=document.getElementById(id);el.checked=S[key];el.onchange=()=>{S[key]=el.checked;save();after&&after();};}
 bindCheck('micOn','micOn',()=>{if(S.micOn)startMic();else level=0;});
+bindCheck('sfxOn','sfxOn',()=>{if(S.sfxOn){sfxAC();if(!S.micOn){S.micOn=true;document.getElementById('micOn').checked=true;save();startMic();}}});
+bindRange('sfxVol','sfxVol',v=>v);
+document.getElementById('sfxTest').onclick=()=>{sfxUntil=performance.now()+playSfx(EXPR[cur])+300;};
 bindCheck('autoOn','autoOn',()=>{autoAt=performance.now()});
 bindCheck('blinkOn','blinkOn');
 if('serviceWorker'in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})});}
