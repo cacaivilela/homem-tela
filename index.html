@@ -466,12 +466,17 @@ function draw(cg,pg,tt){
 function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 requestAnimationFrame(frame);
 
-let audio=null,analyser=null,buf=null;
+let analyser=null,buf=null,micStarting=false;
 async function startMic(){
- if(audio){audio.resume&&audio.resume();return;}
+ if(analyser||micStarting){ensureAudio();return;}
+ micStarting=true;
  try{
-  const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,latency:0}});
-  audio=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+  ensureAudio();                                   // cria/retoma o áudio ainda dentro do toque
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('sem getUserMedia');
+  let stream;
+  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,latency:0}});}
+  catch(e1){stream=await navigator.mediaDevices.getUserMedia({audio:true});}   // tenta de novo sem exigências
+  ensureAudio();
   const src=audio.createMediaStreamSource(stream);analyser=audio.createAnalyser();analyser.fftSize=256;src.connect(analyser);buf=new Float32Array(analyser.fftSize);
   let floor=0.02,last=performance.now();
   (function poll(){
@@ -484,16 +489,29 @@ async function startMic(){
    if(target>level)level=target;else level=Math.max(target,level-dt*7);
    setTimeout(poll,16);
   })();
- }catch(err){S.micOn=false;document.getElementById('micOn').checked=false;save();document.getElementById('micErr').hidden=false;}
+ }catch(err){
+  S.micOn=false;document.getElementById('micOn').checked=false;save();
+  const el=document.getElementById('micErr');el.hidden=false;
+  el.textContent='Sem acesso ao microfone ('+(err&&err.name||err)+'). Libere a permissão no navegador e abra pelo https.';
+ }
+ micStarting=false;
 }
+// qualquer toque retoma o áudio (iPhone suspende quando sai do app)
+document.addEventListener('pointerdown',()=>{if(audio)ensureAudio()},{passive:true});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&audio)ensureAudio()});
 
 // ---- efeitos sonoros (sintetizados com WebAudio, sem arquivos) ----
-let sfxCtx=null,sfxGain=null;
+let audio=null,sfxGain=null;
+function ensureAudio(){
+ if(!audio){const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return null;audio=new AC({latencyHint:'interactive'});}
+ if(audio.state==='suspended')audio.resume().catch(()=>{});
+ return audio;
+}
 function sfxAC(){
- if(!sfxCtx){sfxCtx=new (window.AudioContext||window.webkitAudioContext)();sfxGain=sfxCtx.createGain();sfxGain.connect(sfxCtx.destination);}
- if(sfxCtx.state==='suspended')sfxCtx.resume();
+ const ac=ensureAudio();if(!ac)return null;
+ if(!sfxGain){sfxGain=ac.createGain();sfxGain.connect(ac.destination);}
  sfxGain.gain.value=S.sfxVol/100;
- return sfxCtx;
+ return ac;
 }
 function tone(o){
  const ac=o.ac,osc=ac.createOscillator(),g=ac.createGain(),s=ac.currentTime+(o.t||0),d=o.dur||.2,f0=o.f0||440,f1=o.f1||f0,v=o.vol||.4;
@@ -528,7 +546,7 @@ const SFX={
  festa:a=>{tone({...a,type:'sawtooth',f0:300,f1:600,dur:.4,vol:.35});tone({...a,type:'sawtooth',f0:450,f1:900,dur:.4,vol:.25});ruido({...a,dur:.4,vol:.15,f:5000});return 500;}
 };
 function playSfx(e){
- try{const ac=sfxAC();const k=e.som||e.id.replace(/(2|16)$/,'');return (SFX[k]||SFX.neutro)({ac});}catch(err){return 300;}
+ try{const ac=sfxAC();if(!ac)return 300;const k=e.som||e.id.replace(/(2|16)$/,'');return (SFX[k]||SFX.neutro)({ac});}catch(err){return 300;}
 }
 let quietAt=performance.now(),sfxUntil=0;
 
