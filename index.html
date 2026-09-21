@@ -193,13 +193,13 @@ const OLHO_DORMINDO=[
  "...###...",
  "........."];
 const OLHO_SUSTO=[
+ ".#######.",
+ ".........",
  "..#####..",
- ".##...##.",
- "##.....##",
- "##..#..##",
- "##.....##",
- ".##...##.",
- "..#####.."];
+ ".#.....#.",
+ ".#..#..#.",
+ ".#.....#.",
+ "..#####.."];   // sobrancelha em cima + anel com pupila pequena
 const OLHO_APERTADO=[
  "##.......",
  "..##.....",
@@ -248,9 +248,8 @@ function eyes(g,e,blink,dx,dy,t){
   if(e.olho==='ponto'){stampAt(g,OLHO_PONTO,sx,sy);continue;}
   if(e.olho==='apertado'){stampAt(g,side==='L'?OLHO_APERTADO:espelho(OLHO_APERTADO),sx,sy);continue;}
   if(e.olho==='susto'){
-   for(let x=sx+1;x<=sx+7;x++)put(g,x,Math.max(0,sy-1));            // sobrancelha lá em cima
-   if(closed){for(let x=sx+1;x<=sx+7;x++)put(g,x,sy+4);continue;}
-   stampAt(g,OLHO_SUSTO,sx,sy+1);
+   if(closed){for(let x=sx+1;x<=sx+7;x++)put(g,x,sy);for(let x=sx+2;x<=sx+6;x++)put(g,x,sy+4);continue;}
+   stampAt(g,OLHO_SUSTO,sx,sy);
    continue;
   }
   if(e.olho==='bravo'||e.olho==='triste'){
@@ -340,18 +339,18 @@ const MF={
  "........###.....",
  "................"],
  grito:[
+ "................",
  "...##########...",
  "..#..........#..",
- ".#............#.",
  ".#............#.",
  ".#............#.",
  "..#..........#..",
  "...##########..."],
  berro:[
+ "................",
  "...##########...",
  "..#....##....#..",
  ".#.....##.....#.",
- ".#............#.",
  ".#............#.",
  "..#..........#..",
  "...##########..."],
