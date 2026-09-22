@@ -87,6 +87,8 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <div id="camWrap"><canvas id="camView" width="64" height="48"></canvas><span id="camDir">·</span><span class="sub" id="camInfo" style="margin:0">Desligado.</span></div>
     <label class="toggle"><span>Inverter a direção da câmera (se trocar pro lado errado)</span><input id="camInv" type="checkbox"></label>
     <p class="sub" id="camErr" hidden style="color:#ff6b6b">Sem acesso à câmera.</p>
+    <label class="toggle"><span>Apontar com o dedo pra um lado troca de cara (câmera + IA de mão; baixa ~15 MB na primeira vez)</span><input id="apontaOn" type="checkbox"></label>
+    <p class="sub" id="apontaInfo" style="margin:-4px 0 8px">Desligado.</p>
     <label class="toggle"><span>Falar o nome da expressão ao trocar</span><input id="falarNome" type="checkbox"></label>
     <label class="toggle"><span>Piscar sozinho</span><input id="blinkOn" type="checkbox" checked></label>
 
@@ -105,7 +107,7 @@ const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
 const COLS=30;
 let ROWS=19,W=0,H=0,dpr=1;
 
-const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,falarNome:false,swipeOn:true,camOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
+const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,falarNome:false,swipeOn:true,camOn:false,apontaOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
 try{Object.assign(S,JSON.parse(localStorage.getItem('homemtela')||'{}'))}catch(e){}
 if(S.shakeOn){S.camOn=true;}delete S.shakeOn;delete S.shakeF;   // versão antiga usava o acelerômetro; agora é a câmera
 function save(){try{localStorage.setItem('homemtela',JSON.stringify(S))}catch(e){}}
@@ -670,6 +672,7 @@ function camAnalisa(t){
  if(!panel.hidden){
   camVctx.drawImage(camCv,0,0);
   camVctx.fillStyle='rgba(255,210,63,.55)';for(let i=0;i<mask.length;i++)if(mask[i])camVctx.fillRect(i%CW,(i/CW)|0,1,1);
+  if(apontaPt){camVctx.strokeStyle='#4fd8ff';camVctx.lineWidth=2;camVctx.beginPath();camVctx.moveTo(apontaPt.mx*CW,apontaPt.my*CH);camVctx.lineTo(apontaPt.x*CW,apontaPt.y*CH);camVctx.stroke();}
   camInfo.textContent='Modo: '+(camModoVisto==='cabeca'?'cabeça':camModoVisto==='mao'?'mão':'aparelho')+(S.camModo==='auto'?' (automático)':'')+(camUlt?' · última: '+camUlt:'')+(dx?' · '+(dx>0?'→':'←')+Math.abs(dx):'');
  }
  if(!camPrev)camPrev=new Float32Array(CW*CH);
@@ -677,8 +680,55 @@ function camAnalisa(t){
 }
 function camTick(){
  if(!camStream)return;
- if(camVideo.readyState>=2&&!camVideo.paused)camAnalisa(performance.now());
+ if(camVideo.readyState>=2&&!camVideo.paused){const t=performance.now();if(S.camOn)camAnalisa(t);if(S.apontaOn&&hand)apontaAnalisa(t);}
  camLoop=(camVideo.requestVideoFrameCallback?camVideo.requestVideoFrameCallback(camTick):setTimeout(camTick,33));
+}
+// ---- apontar com o dedo ----
+// Usa o HandLandmarker do MediaPipe (baixado do CDN na primeira vez e guardado pelo service worker).
+// Dedo indicador esticado e virado claramente pro lado, com o dedo do meio dobrado, por ~200 ms = aponta.
+// Uma troca por gesto: pra trocar de novo, abaixa o dedo e aponta outra vez.
+const MP='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14',MPMODEL='https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+const apontaInfo=document.getElementById('apontaInfo');
+let hand=null,handLoading=false,apontaLast=0,apontaDir=0,apontaN=0,apontaFeito=false,apontaPt=null;
+async function loadHand(){
+ if(hand||handLoading)return;
+ handLoading=true;apontaInfo.textContent='Baixando a IA de mão…';
+ try{
+  const m=await import(MP+'/vision_bundle.mjs');
+  const vision=await m.FilesetResolver.forVisionTasks(MP+'/wasm');
+  const opts=d=>({baseOptions:{modelAssetPath:MPMODEL,delegate:d},runningMode:'VIDEO',numHands:1,minHandDetectionConfidence:0.5,minTrackingConfidence:0.5});
+  try{hand=await m.HandLandmarker.createFromOptions(vision,opts('GPU'));}catch(e1){hand=await m.HandLandmarker.createFromOptions(vision,opts('CPU'));}
+  apontaInfo.textContent='Pronto. Aponte pro lado na frente da câmera.';
+ }catch(err){
+  S.apontaOn=false;document.getElementById('apontaOn').checked=false;save();
+  apontaInfo.textContent='Não deu pra carregar a IA de mão ('+(err&&err.message||err)+'). Precisa de internet na primeira vez.';
+  if(!S.camOn)stopCam();
+ }
+ handLoading=false;
+}
+function apontaAnalisa(t){
+ if(t-apontaLast<60)return;apontaLast=t;   // ~15 detecções por segundo já basta
+ if(!S.camOn&&!panel.hidden){camVctx.drawImage(camVideo,0,0,CW,CH);if(apontaPt){camVctx.strokeStyle='#4fd8ff';camVctx.lineWidth=2;camVctx.beginPath();camVctx.moveTo(apontaPt.mx*CW,apontaPt.my*CH);camVctx.lineTo(apontaPt.x*CW,apontaPt.y*CH);camVctx.stroke();}}
+ let r;try{r=hand.detectForVideo(camVideo,Math.round(t));}catch(e){return;}
+ const L=r&&r.landmarks&&r.landmarks[0];
+ let dir=0;apontaPt=null;
+ if(L){
+  const ar=camVideo.videoWidth/(camVideo.videoHeight||1),d=(a,b)=>Math.hypot((a.x-b.x)*ar,a.y-b.y);
+  const tam=d(L[0],L[9]),ind=d(L[8],L[5]),meio=d(L[12],L[9]);
+  const vx=(L[8].x-L[5].x)*ar,vy=L[8].y-L[5].y;
+  apontaPt={x:L[8].x,y:L[8].y,mx:L[5].x,my:L[5].y};
+  if(ind>tam*0.55&&meio<ind*0.75&&Math.abs(vx)>Math.abs(vy)*1.5)dir=vx>0?1:-1;   // indicador esticado, meio dobrado, apontando pro lado
+ }
+ if(dir&&dir===apontaDir)apontaN++;else{apontaDir=dir;apontaN=dir?1:0;}
+ if(!dir)apontaFeito=false;   // abaixou o dedo: libera a próxima
+ if(dir&&apontaN>=3&&!apontaFeito){
+  apontaFeito=true;
+  const sinal=(S.camFace==='environment'?-1:1)*(S.camInv?-1:1);   // câmera frontal não espelha: apontar pra direita de quem aponta aparece indo pra esquerda da imagem
+  if(-dir*sinal>0)next();else back();
+  camUlt=-dir*sinal>0?'→ próxima (dedo)':'← anterior (dedo)';
+  camDirEl.textContent=-dir*sinal>0?'→':'←';camDirEl.classList.add('on');setTimeout(()=>{camDirEl.classList.remove('on');camDirEl.textContent='·';},700);
+ }
+ if(!panel.hidden)apontaInfo.textContent=L?(dir?'Apontando '+(dir>0?'→':'←')+(apontaFeito?' (trocou; abaixe o dedo pra apontar de novo)':''):'Mão vista; estique o indicador pro lado.'):'Nenhuma mão na câmera.';
 }
 async function startCam(){
  if(camStream||camStarting)return;
@@ -694,7 +744,7 @@ async function startCam(){
   st.getVideoTracks()[0].addEventListener('ended',()=>{if(S.camOn){stopCam();camErr.hidden=false;camErr.textContent='A câmera foi desligada pelo sistema.';}});
   camTick();
  }catch(err){
-  S.camOn=false;document.getElementById('camOn').checked=false;save();
+  S.camOn=false;S.apontaOn=false;document.getElementById('camOn').checked=false;document.getElementById('apontaOn').checked=false;save();
   camErr.hidden=false;camErr.textContent='Sem acesso à câmera ('+(err&&err.name||err)+'). Libere a permissão no navegador e abra pelo https.';
  }
  camStarting=false;
@@ -734,14 +784,15 @@ bindRange('sfxVol','sfxVol',v=>v);
 document.getElementById('sfxTest').onclick=()=>{sfxUntil=performance.now()+playSfx(EXPR[cur])+300;};
 bindCheck('autoOn','autoOn',()=>{autoAt=performance.now()});
 bindCheck('blinkOn','blinkOn');bindCheck('falarNome','falarNome');bindCheck('swipeOn','swipeOn');
-bindCheck('camOn','camOn',()=>{if(S.camOn)startCam();else stopCam();});
+bindCheck('camOn','camOn',()=>{if(S.camOn)startCam();else if(!S.apontaOn)stopCam();});
+bindCheck('apontaOn','apontaOn',()=>{if(S.apontaOn){startCam();loadHand();}else{apontaInfo.textContent='Desligado.';if(!S.camOn)stopCam();}});
 bindRange('camF','camF',v=>v);
 bindCheck('camInv','camInv');
 function bindSelect(id,key,after){const el=document.getElementById(id);el.value=S[key];el.onchange=()=>{S[key]=el.value;save();after&&after();};}
 bindSelect('camModo','camModo');
 bindSelect('camFace','camFace',()=>{if(S.camOn){stopCam();startCam();}});
-if(S.camOn)startCam();
-document.addEventListener('visibilitychange',()=>{if(!S.camOn)return;if(document.hidden)stopCam();else startCam();});   // não deixa a câmera ligada com o app em segundo plano
+if(S.camOn||S.apontaOn)startCam();if(S.apontaOn)loadHand();
+document.addEventListener('visibilitychange',()=>{if(!S.camOn&&!S.apontaOn)return;if(document.hidden)stopCam();else startCam();});   // não deixa a câmera ligada com o app em segundo plano
 if('serviceWorker'in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})});}
 })();
 </script>
