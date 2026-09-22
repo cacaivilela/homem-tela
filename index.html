@@ -74,6 +74,9 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
 
     <label class="toggle"><span>Boca segue a voz (microfone)</span><input id="micOn" type="checkbox"></label>
     <p class="sub" id="micErr" hidden style="color:#ff6b6b">Sem acesso ao microfone. Libere a permissão no navegador.</p>
+    <label class="toggle"><span>IA filtra sons: só a voz mexe a boca (ignora música, ventilador, barulho de fundo; baixa ~5 MB na primeira vez)</span><input id="vozOn" type="checkbox"></label>
+    <div class="row"><label for="vozC">Confiança mínima</label><input id="vozC" type="range" min="5" max="80" value="25"><output id="vozCO">25%</output></div>
+    <p class="sub" id="vozInfo" style="margin:-2px 0 8px">Desligado.</p>
     <label class="toggle"><span>Efeitos sonoros (falar faz um barulho que muda com a expressão)</span><input id="sfxOn" type="checkbox"></label>
     <div class="row"><label for="sfxVol">Volume dos efeitos</label><input id="sfxVol" type="range" min="0" max="100" value="70"><output id="sfxVolO">70</output></div>
     <button class="btn" id="sfxTest" type="button" style="flex:none;width:100%;margin:2px 0 6px">Testar som da expressão atual</button>
@@ -107,7 +110,7 @@ const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
 const COLS=30;
 let ROWS=19,W=0,H=0,dpr=1;
 
-const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,falarNome:false,swipeOn:true,camOn:false,apontaOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
+const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,vozOn:false,vozC:25,falarNome:false,swipeOn:true,camOn:false,apontaOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
 try{Object.assign(S,JSON.parse(localStorage.getItem('homemtela')||'{}'))}catch(e){}
 if(S.shakeOn){S.camOn=true;}delete S.shakeOn;delete S.shakeF;   // versão antiga usava o acelerômetro; agora é a câmera
 function save(){try{localStorage.setItem('homemtela',JSON.stringify(S))}catch(e){}}
@@ -472,7 +475,8 @@ function frame(t){
  if(transT<1)transT=Math.min(1,transT+dt/0.22);
  const e=EXPR[cur];
  let open=0;
- if(S.micOn){const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
+ if(S.micOn&&(!S.vozOn||vozAte>t)){const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
+ else mouthK=0;
  if(S.sfxOn&&S.micOn){
   if(open===0){if(!quietAt)quietAt=t;}
   else if(quietAt&&t-quietAt>200&&t>sfxUntil){sfxUntil=t+playSfx(e)+300;quietAt=0;}
@@ -500,7 +504,7 @@ function draw(cg,pg,tt){
 function roundRect(x,y,w,h,r){ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();}
 requestAnimationFrame(frame);
 
-let analyser=null,buf=null,micStarting=false;
+let analyser=null,buf=null,micStarting=false,micSrc=null;
 async function startMic(){
  if(analyser||micStarting){ensureAudio();return;}
  micStarting=true;
@@ -511,7 +515,8 @@ async function startMic(){
   try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,latency:0}});}
   catch(e1){stream=await navigator.mediaDevices.getUserMedia({audio:true});}   // tenta de novo sem exigências
   ensureAudio();
-  const src=audio.createMediaStreamSource(stream);analyser=audio.createAnalyser();analyser.fftSize=256;src.connect(analyser);buf=new Float32Array(analyser.fftSize);
+  const src=micSrc=audio.createMediaStreamSource(stream);analyser=audio.createAnalyser();analyser.fftSize=256;src.connect(analyser);buf=new Float32Array(analyser.fftSize);
+  if(S.vozOn){if(som)ligarSom();else loadSom();}
   let floor=0.02,last=performance.now();
   (function poll(){
    if(!analyser)return;
@@ -530,6 +535,65 @@ async function startMic(){
  }
  micStarting=false;
 }
+// ---- IA que filtra sons ----
+// YAMNet (MediaPipe AudioClassifier) ouve ~1 s de cada vez e diz o que é aquele som entre 521 tipos.
+// Só os tipos de voz humana liberam a boca; música, ventilador, teclado, carro e afins ficam de fora.
+// O modelo (~5 MB) vem do CDN na primeira vez e depois fica guardado pelo service worker.
+const MPA='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-audio@0.10.14',MPAMODEL='https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/1/yamnet.tflite';
+const VOZ=['speech','child speech','conversation','narration','monologue','babbling','speech synthesizer','shout','bellow','whoop','yell','battle cry','children shouting','screaming','whispering','laughter','baby laughter','giggle','snicker','belly laugh','chuckle','crying','baby cry','whimper','wail','singing','choir','yodeling','chant','mantra','male singing','female singing','child singing','rapping','humming','groan','grunt','sigh','male speech','female speech'];
+const vozInfo=document.getElementById('vozInfo');
+let som=null,somLoading=false,somBuf=null,somPos=0,somSR=0,somNode=null,somZero=null,somTimer=0,vozAte=0,vozNome='';
+async function loadSom(){
+ if(som||somLoading)return;
+ somLoading=true;vozInfo.textContent='Baixando a IA de som…';
+ try{
+  const m=await import(MPA+'/audio_bundle.mjs');
+  const fs=await m.FilesetResolver.forAudioTasks(MPA+'/wasm');
+  som=await m.AudioClassifier.createFromOptions(fs,{baseOptions:{modelAssetPath:MPAMODEL},maxResults:5});
+  vozInfo.textContent=S.micOn?'Ouvindo…':'Ligue o microfone aqui em cima.';
+  ligarSom();
+ }catch(err){
+  S.vozOn=false;document.getElementById('vozOn').checked=false;save();
+  vozInfo.textContent='Não deu pra carregar a IA de som ('+(err&&err.message||err)+'). Precisa de internet na primeira vez.';
+ }
+ somLoading=false;
+}
+// guarda o último ~1,2 s do microfone num buffer circular pra IA analisar
+function ligarSom(){
+ if(somNode||!micSrc||!audio)return;
+ somSR=audio.sampleRate;somBuf=new Float32Array(Math.ceil(somSR*1.2));somPos=0;
+ somNode=audio.createScriptProcessor?audio.createScriptProcessor(4096,1,1):null;
+ if(!somNode){vozInfo.textContent='Este navegador não deixa a IA ouvir o microfone.';return;}
+ somNode.onaudioprocess=ev=>{
+  const d=ev.inputBuffer.getChannelData(0);
+  for(let i=0;i<d.length;i++){somBuf[somPos]=d[i];somPos=(somPos+1)%somBuf.length;}
+ };
+ somZero=audio.createGain();somZero.gain.value=0;
+ micSrc.connect(somNode);somNode.connect(somZero);somZero.connect(audio.destination);   // precisa chegar na saída pra rodar, mas com volume zero
+ somTimer=setInterval(ouvirSom,400);
+}
+function desligarSom(){
+ if(somTimer){clearInterval(somTimer);somTimer=0;}
+ if(somNode){somNode.onaudioprocess=null;try{somNode.disconnect();somZero.disconnect();}catch(e){}somNode=null;somZero=null;}
+ vozAte=0;vozNome='';
+}
+function ouvirSom(){
+ if(!som||!somNode)return;
+ const t=performance.now();
+ const n=Math.min(somBuf.length,Math.round(somSR*0.975)),a=new Float32Array(n);
+ for(let i=0;i<n;i++)a[i]=somBuf[(somPos-n+i+somBuf.length*2)%somBuf.length];   // desenrola o buffer circular
+ let r;try{r=som.classify(a,somSR);}catch(e){return;}
+ const cs=r&&r[0]&&r[0].classifications&&r[0].classifications[0];
+ if(!cs||!cs.categories||!cs.categories.length)return;
+ const lim=S.vozC/100;let melhor=cs.categories[0],voz=null;
+ for(const c of cs.categories)if(VOZ.includes((c.categoryName||'').toLowerCase())&&c.score>=lim&&(!voz||c.score>voz.score))voz=c;
+ if(voz){vozAte=t+900;vozNome=voz.categoryName+' '+Math.round(voz.score*100)+'%';}   // segura quase 1 s: a fala tem pausas entre as palavras
+ if(!panel.hidden)vozInfo.textContent=(vozAte>t?'✓ voz: '+vozNome:'✗ '+(melhor.categoryName||'?')+' '+Math.round(melhor.score*100)+'% (boca parada)');
+}
+
+// em segundo plano a IA para de ouvir (não gasta bateria à toa)
+document.addEventListener('visibilitychange',()=>{if(!S.vozOn)return;if(document.hidden)desligarSom();else if(S.micOn&&som)ligarSom();});
+
 // qualquer toque retoma o áudio (iPhone suspende quando sai do app)
 document.addEventListener('pointerdown',()=>{if(audio)ensureAudio()},{passive:true});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&audio)ensureAudio()});
@@ -778,7 +842,12 @@ syncChips();
 function bindRange(id,key,fmt){const el=document.getElementById(id),o=document.getElementById(id+'O');el.value=S[key];o.textContent=fmt(S[key]);el.oninput=()=>{S[key]=+el.value;o.textContent=fmt(S[key]);save();};}
 bindRange('bright','bright',v=>v);bindRange('gap','gap',v=>v);bindRange('mic','mic',v=>v);bindRange('limiar','limiar',v=>v);bindRange('autoT','autoT',v=>v+' s');
 function bindCheck(id,key,after){const el=document.getElementById(id);el.checked=S[key];el.onchange=()=>{S[key]=el.checked;save();after&&after();};}
-bindCheck('micOn','micOn',()=>{if(S.micOn)startMic();else level=0;});
+bindCheck('micOn','micOn',()=>{if(S.micOn){startMic();if(S.vozOn&&som)ligarSom();}else{level=0;desligarSom();if(S.vozOn)vozInfo.textContent='Ligue o microfone aqui em cima.';}});
+bindCheck('vozOn','vozOn',()=>{
+ if(S.vozOn){if(!S.micOn){S.micOn=true;document.getElementById('micOn').checked=true;save();startMic();}if(som)ligarSom();else loadSom();}
+ else{desligarSom();vozInfo.textContent='Desligado.';}
+});
+bindRange('vozC','vozC',v=>v+'%');
 bindCheck('sfxOn','sfxOn',()=>{if(S.sfxOn){sfxAC();if(!S.micOn){S.micOn=true;document.getElementById('micOn').checked=true;save();startMic();}}});
 bindRange('sfxVol','sfxVol',v=>v);
 document.getElementById('sfxTest').onclick=()=>{sfxUntil=performance.now()+playSfx(EXPR[cur])+300;};
@@ -791,6 +860,7 @@ bindCheck('camInv','camInv');
 function bindSelect(id,key,after){const el=document.getElementById(id);el.value=S[key];el.onchange=()=>{S[key]=el.value;save();after&&after();};}
 bindSelect('camModo','camModo');
 bindSelect('camFace','camFace',()=>{if(S.camOn){stopCam();startCam();}});
+if(S.vozOn&&S.micOn)loadSom();
 if(S.camOn||S.apontaOn)startCam();if(S.apontaOn)loadHand();
 document.addEventListener('visibilitychange',()=>{if(!S.camOn&&!S.apontaOn)return;if(document.hidden)stopCam();else startCam();});   // não deixa a câmera ligada com o app em segundo plano
 if('serviceWorker'in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})});}
