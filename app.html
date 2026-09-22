@@ -79,7 +79,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <button class="btn" id="sfxTest" type="button" style="flex:none;width:100%;margin:2px 0 6px">Testar som da expressão atual</button>
     <label class="toggle"><span>Modo automático (troca sozinho; desliga ao trocar na mão)</span><input id="autoOn" type="checkbox"></label>
     <label class="toggle"><span>Câmera detecta movimento (cabeçada pro lado no computador; girar o aparelho de repente no tablet/celular)</span><input id="camOn" type="checkbox"></label>
-    <div class="row sel"><label for="camModo">O que se mexe</label><select id="camModo"><option value="auto">Descobrir sozinho</option><option value="cabeca">Cabeça de quem está na frente (PC)</option><option value="aparelho">O aparelho (tablet/celular)</option></select></div>
+    <div class="row sel"><label for="camModo">O que se mexe</label><select id="camModo"><option value="auto">Automático (PC = cabeça, toque = aparelho)</option><option value="cabeca">Cabeça de quem está na frente (PC)</option><option value="aparelho">O aparelho (tablet/celular)</option></select></div>
     <div class="row sel"><label for="camFace">Qual câmera</label><select id="camFace"><option value="user">Frontal (da tela)</option><option value="environment">Traseira</option></select></div>
     <div class="row"><label for="camF">Sensibilidade</label><input id="camF" type="range" min="1" max="10" value="5"><output id="camFO">5</output></div>
     <div class="meter" title="Movimento visto pela câmera agora"><div id="camBar"></div><div id="camThr"></div></div>
@@ -610,11 +610,13 @@ cv.addEventListener('pointercancel',()=>{p0=null;dedo=null;arrastou=false;if(pre
 // máscara isola ela; no tablet a cena inteira desliza quando o aparelho gira. Um movimento rápido pro lado
 // (deslocamento acumulado em ~250 ms acima do limiar) troca a cara; o sentido depende do modo e da câmera.
 const CW=64,CH=48,CD=10,CDY=4;
+// sem o usuário escolher: computador (mouse) = a cabeça de quem está na frente; tela de toque = o aparelho inteiro
+const camPadrao=(navigator.maxTouchPoints>0||matchMedia('(pointer:coarse)').matches)?'aparelho':'cabeca';
 const camVideo=document.getElementById('camVideo'),camView=document.getElementById('camView'),camVctx=camView.getContext('2d'),
       camErr=document.getElementById('camErr'),camBar=document.getElementById('camBar'),camThr=document.getElementById('camThr'),
       camDirEl=document.getElementById('camDir'),camInfo=document.getElementById('camInfo');
 const camCv=document.createElement('canvas');camCv.width=CW;camCv.height=CH;const camCtx=camCv.getContext('2d',{willReadFrequently:true});
-let camStream=null,camStarting=false,camPrev=null,camCur=new Float32Array(CW*CH),camMask=new Uint8Array(CW*CH),camSad=new Float32Array((2*CD+1)*(2*CDY+1)),camMag=0,camLast=0,camHist=[],camModoVisto='?',camLoop=0,camDirAt=0;
+let camStream=null,camStarting=false,camPrev=null,camCur=new Float32Array(CW*CH),camMask=new Uint8Array(CW*CH),camSad=new Float32Array((2*CD+1)*(2*CDY+1)),camMag=0,camLast=0,camHist=[],camModoVisto=camPadrao,camUlt='',camLoop=0,camDirAt=0;
 function camLimiar(){return 12.5-S.camF*1.05;}   // px (em 64 de largura) acumulados em ~250 ms: sens. 1 = 11.5px, sens. 10 = 2px
 function camAnalisa(t){
  const dt=camLast?Math.min(.2,(t-camLast)/1000):0;camLast=t;
@@ -646,24 +648,24 @@ function camAnalisa(t){
   }
  }
  // guarda os últimos ~250 ms e soma o deslocamento horizontal do período
- camHist.push({t,dx,dy,fr:nm/cur.length});while(camHist.length&&t-camHist[0].t>250)camHist.shift();
- let sx=0,sy=0,sp=0,sn=0,pico=0,fr=0,nf=0;for(const h of camHist){sx+=h.dx;sy+=h.dy;if(h.dx>0)sp+=h.dx;else sn-=h.dx;pico=Math.max(pico,Math.abs(h.dx));if(h.dx){fr+=h.fr;nf++;}}
- const firme=Math.min(sp,sn)<=Math.max(sp,sn)*0.25&&pico>=2;   // quase todo o movimento foi pro mesmo lado e teve pelo menos um quadro rápido (mexer devagar não conta)
+ camHist.push({t,dx,dy});while(camHist.length&&t-camHist[0].t>250)camHist.shift();
+ let sx=0,sy=0,sp=0,sn=0,pico=0;for(const h of camHist){sx+=h.dx;sy+=h.dy;if(h.dx>0)sp+=h.dx;else sn-=h.dx;pico=Math.max(pico,Math.abs(h.dx));}
+ const firme=Math.min(sp,sn)<=Math.max(sp,sn)*0.35&&pico>=2;   // quase todo o movimento foi pro mesmo lado e teve pelo menos um quadro rápido (mexer devagar não conta)
  camMag=Math.max(Math.abs(sx),camMag*.85);
- // descobre sozinho o que se mexe: quadros em que a cena quase inteira mudou = aparelho; só um pedaço = cabeça
- if(S.camModo!=='auto')camModoVisto=S.camModo;else if(nf)camModoVisto=fr/nf>0.35?'aparelho':'cabeca';
+ camModoVisto=S.camModo!=='auto'?S.camModo:camPadrao;
  const lim=camLimiar();
- if(firme&&Math.abs(sx)>=lim&&Math.abs(sx)>Math.abs(sy)*1.2&&t-camDirAt>900&&camModoVisto!=='?'){
+ if(firme&&Math.abs(sx)>=lim&&Math.abs(sx)>Math.abs(sy)*1.2&&t-camDirAt>900){
   camDirAt=t;camHist.length=0;
   // sinal: cabeça na frente da câmera frontal anda pro lado oposto da imagem; aparelho girando arrasta a cena ao contrário; câmera traseira inverte de novo
   const sinal=(camModoVisto==='cabeca'?-1:1)*(S.camFace==='environment'?-1:1)*(S.camInv?-1:1);
   if(sx*sinal>0)next();else back();
+  camUlt=sx*sinal>0?'→ próxima':'← anterior';
   camDirEl.textContent=sx*sinal>0?'→':'←';camDirEl.classList.add('on');setTimeout(()=>{camDirEl.classList.remove('on');camDirEl.textContent='·';},700);
  }
  if(!panel.hidden){
   camVctx.drawImage(camCv,0,0);
   camVctx.fillStyle='rgba(255,210,63,.55)';for(let i=0;i<mask.length;i++)if(mask[i])camVctx.fillRect(i%CW,(i/CW)|0,1,1);
-  camInfo.textContent=(camModoVisto==='cabeca'?'Vendo: cabeça':camModoVisto==='aparelho'?'Vendo: aparelho':'Esperando movimento…')+(dx?' · '+(dx>0?'→':'←')+Math.abs(dx):'');
+  camInfo.textContent='Modo: '+(camModoVisto==='cabeca'?'cabeça':'aparelho')+(S.camModo==='auto'?' (automático)':'')+(camUlt?' · última: '+camUlt:'')+(dx?' · '+(dx>0?'→':'←')+Math.abs(dx):'');
  }
  if(!camPrev)camPrev=new Float32Array(CW*CH);
  camPrev.set(cur);
@@ -681,7 +683,7 @@ async function startCam(){
   let st;
   try{st=await navigator.mediaDevices.getUserMedia({video:{facingMode:S.camFace,width:{ideal:320},height:{ideal:240},frameRate:{ideal:30}},audio:false});}
   catch(e1){st=await navigator.mediaDevices.getUserMedia({video:true,audio:false});}   // tenta de novo sem exigências
-  camStream=st;camVideo.srcObject=st;camPrev=null;camHist.length=0;camModoVisto='?';
+  camStream=st;camVideo.srcObject=st;camPrev=null;camHist.length=0;camUlt='';
   try{await camVideo.play();}catch(e){}
   camErr.hidden=true;camInfo.textContent='Ligando…';
   st.getVideoTracks()[0].addEventListener('ended',()=>{if(S.camOn){stopCam();camErr.hidden=false;camErr.textContent='A câmera foi desligada pelo sistema.';}});
@@ -731,7 +733,7 @@ bindCheck('camOn','camOn',()=>{if(S.camOn)startCam();else stopCam();});
 bindRange('camF','camF',v=>v);
 bindCheck('camInv','camInv');
 function bindSelect(id,key,after){const el=document.getElementById(id);el.value=S[key];el.onchange=()=>{S[key]=el.value;save();after&&after();};}
-bindSelect('camModo','camModo',()=>{camModoVisto='?';});
+bindSelect('camModo','camModo');
 bindSelect('camFace','camFace',()=>{if(S.camOn){stopCam();startCam();}});
 if(S.camOn)startCam();
 document.addEventListener('visibilitychange',()=>{if(!S.camOn)return;if(document.hidden)stopCam();else startCam();});   // não deixa a câmera ligada com o app em segundo plano
