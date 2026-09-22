@@ -26,8 +26,8 @@ html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font:14px/1
 input[type=range]{width:100%;accent-color:var(--accent)}
 .meter{position:relative;height:8px;margin:2px 0 8px;border-radius:4px;background:#1e2329;overflow:hidden}
 #meterBar{height:100%;width:0;background:var(--accent);transition:width .05s linear}
-#shakeBar,#camBar{height:100%;width:0;background:#ffd23f;transition:width .05s linear}
-#meterThr,#shakeThr,#camThr{position:absolute;top:0;bottom:0;width:2px;background:#ff6b6b;left:0}
+#camBar{height:100%;width:0;background:#ffd23f;transition:width .05s linear}
+#meterThr,#camThr{position:absolute;top:0;bottom:0;width:2px;background:#ff6b6b;left:0}
 #camWrap{display:flex;gap:10px;align-items:center;padding:6px 0}
 #camView{width:96px;height:72px;border-radius:8px;background:#0a0c0e;border:1px solid var(--line);image-rendering:pixelated;flex:none}
 #camDir{font-size:22px;width:32px;text-align:center;color:var(--mute)}
@@ -78,10 +78,6 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <div class="row"><label for="sfxVol">Volume dos efeitos</label><input id="sfxVol" type="range" min="0" max="100" value="70"><output id="sfxVolO">70</output></div>
     <button class="btn" id="sfxTest" type="button" style="flex:none;width:100%;margin:2px 0 6px">Testar som da expressão atual</button>
     <label class="toggle"><span>Modo automático (troca sozinho; desliga ao trocar na mão)</span><input id="autoOn" type="checkbox"></label>
-    <label class="toggle"><span>Chacoalhar o celular troca de cara (pra direita = próxima, pra esquerda = anterior)</span><input id="shakeOn" type="checkbox"></label>
-    <div class="row"><label for="shakeF">Força da chacoalhada</label><input id="shakeF" type="range" min="4" max="20" value="9"><output id="shakeFO">9</output></div>
-    <div class="meter" title="Movimento agora"><div id="shakeBar"></div><div id="shakeThr"></div></div>
-    <p class="sub" id="shakeErr" hidden style="color:#ff6b6b">Sem acesso ao sensor de movimento.</p>
     <label class="toggle"><span>Câmera detecta movimento (cabeçada pro lado no computador; girar o aparelho de repente no tablet/celular)</span><input id="camOn" type="checkbox"></label>
     <div class="row sel"><label for="camModo">O que se mexe</label><select id="camModo"><option value="auto">Descobrir sozinho</option><option value="cabeca">Cabeça de quem está na frente (PC)</option><option value="aparelho">O aparelho (tablet/celular)</option></select></div>
     <div class="row sel"><label for="camFace">Qual câmera</label><select id="camFace"><option value="user">Frontal (da tela)</option><option value="environment">Traseira</option></select></div>
@@ -108,8 +104,9 @@ const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
 const COLS=30;
 let ROWS=19,W=0,H=0,dpr=1;
 
-const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,falarNome:false,shakeOn:false,shakeF:9,camOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
+const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,falarNome:false,camOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
 try{Object.assign(S,JSON.parse(localStorage.getItem('homemtela')||'{}'))}catch(e){}
+if(S.shakeOn){S.camOn=true;}delete S.shakeOn;delete S.shakeF;   // versão antiga usava o acelerômetro; agora é a câmera
 function save(){try{localStorage.setItem('homemtela',JSON.stringify(S))}catch(e){}}
 
 const EXPR=[
@@ -480,7 +477,7 @@ function frame(t){
  }
  const g=build(e,blink,open,Math.round(driftX),Math.round(driftY),t);
  draw(g,prev,transT);
- if(!panel.hidden){meterBar.style.width=(level*100)+'%';meterThr.style.left=S.limiar+'%';shakeBar.style.width=Math.min(100,shakeMag*4)+'%';shakeThr.style.left=Math.min(100,S.shakeF*4)+'%';camBar.style.width=Math.min(100,camMag/camLimiar()*50)+'%';camThr.style.left='50%';}
+ if(!panel.hidden){meterBar.style.width=(level*100)+'%';meterThr.style.left=S.limiar+'%';camBar.style.width=Math.min(100,camMag/camLimiar()*50)+'%';camThr.style.left='50%';}
  requestAnimationFrame(frame);
 }
 function draw(cg,pg,tt){
@@ -607,36 +604,6 @@ cv.addEventListener('pointerup',ev=>{
 });
 cv.addEventListener('pointercancel',()=>{p0=null;dedo=null;arrastou=false;if(pressTimer){clearTimeout(pressTimer);pressTimer=null}});
 
-// ---- chacoalhar troca de cara ----
-// chacoalhada pra direita = próxima, pra esquerda = anterior (no sentido da tela, que fica deitada)
-let shakeLast=0,shakeBound=false,gx=0,gy=0,shakeMag=0,shakeSeen=0;
-function onMotion(ev){
- if(!S.shakeOn)return;
- let ax,ay;
- if(ev.acceleration&&ev.acceleration.x!==null){ax=ev.acceleration.x||0;ay=ev.acceleration.y||0;}
- else{const g=ev.accelerationIncludingGravity;if(!g)return;gx+=((g.x||0)-gx)*.1;gy+=((g.y||0)-gy)*.1;ax=(g.x||0)-gx;ay=(g.y||0)-gy;}   // tira a gravidade na mão
- const ang=(screen.orientation&&screen.orientation.angle)??window.orientation??0;
- const sx=ang===90?-ay:ang===270||ang===-90?ay:ang===180?-ax:ax;   // aceleração no eixo "direita da tela"
- const now=performance.now();shakeSeen=now;
- const mag=Math.hypot(ax,ay);shakeMag=Math.max(mag,shakeMag*.9);
- if(now-shakeLast>900&&mag>S.shakeF){shakeLast=now;
-  const sy=ang===90?ax:ang===270||ang===-90?-ax:ang===180?-ay:ay;
-  if(Math.abs(sx)>=Math.abs(sy)*0.7){if(sx>0)next();else back();}   // direção clara pra direita/esquerda
-  else next();                                                       // chacoalhada sem direção: próxima
- }
-}
-async function startShake(){
- try{
-  if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function'){
-   const r=await DeviceMotionEvent.requestPermission();if(r!=='granted')throw new Error(r);
-  }
-  if(!shakeBound){window.addEventListener('devicemotion',onMotion);shakeBound=true;}
-  shakeErr.hidden=true;
-  setTimeout(()=>{if(S.shakeOn&&!shakeSeen){shakeErr.hidden=false;shakeErr.textContent='O sensor de movimento não respondeu. Esse aparelho/navegador tem acelerômetro?';}},2500);
- }catch(e){S.shakeOn=false;document.getElementById('shakeOn').checked=false;save();shakeErr.hidden=false;shakeErr.textContent='Sem acesso ao sensor de movimento ('+(e&&e.message||e)+').';}
-}
-const shakeErr=document.getElementById('shakeErr'),shakeBar=document.getElementById('shakeBar'),shakeThr=document.getElementById('shakeThr');
-
 // ---- câmera detecta movimento ----
 // Compara cada quadro com o anterior em 64x48 tons de cinza e procura o deslocamento (dx,dy) que melhor
 // encaixa os pixels que mudaram (fluxo óptico simplificado). No computador só a cabeça se mexe, então a
@@ -760,8 +727,6 @@ bindRange('sfxVol','sfxVol',v=>v);
 document.getElementById('sfxTest').onclick=()=>{sfxUntil=performance.now()+playSfx(EXPR[cur])+300;};
 bindCheck('autoOn','autoOn',()=>{autoAt=performance.now()});
 bindCheck('blinkOn','blinkOn');bindCheck('falarNome','falarNome');
-bindCheck('shakeOn','shakeOn',()=>{if(S.shakeOn)startShake();});
-bindRange('shakeF','shakeF',v=>v);
 bindCheck('camOn','camOn',()=>{if(S.camOn)startCam();else stopCam();});
 bindRange('camF','camF',v=>v);
 bindCheck('camInv','camInv');
@@ -770,7 +735,6 @@ bindSelect('camModo','camModo',()=>{camModoVisto='?';});
 bindSelect('camFace','camFace',()=>{if(S.camOn){stopCam();startCam();}});
 if(S.camOn)startCam();
 document.addEventListener('visibilitychange',()=>{if(!S.camOn)return;if(document.hidden)stopCam();else startCam();});   // não deixa a câmera ligada com o app em segundo plano
-if(S.shakeOn){if(typeof DeviceMotionEvent!=='undefined'&&typeof DeviceMotionEvent.requestPermission==='function')cv.addEventListener('pointerup',()=>{if(S.shakeOn&&!shakeBound)startShake()},{once:true});else startShake();}   // iPhone só permite pedir dentro de um toque
 if('serviceWorker'in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})});}
 })();
 </script>
