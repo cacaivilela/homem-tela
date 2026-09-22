@@ -55,7 +55,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
 
 <canvas id="stage" aria-label="Rosto animado da máscara"></canvas>
 <video id="camVideo" playsinline muted autoplay aria-hidden="true"></video>
-<div id="hint">toque para começar · segure 1 s para ajustes · arraste pra mover os olhos</div>
+<div id="hint">toque para começar · segure 1 s para ajustes · deslize pro lado pra trocar · arraste devagar pra mover os olhos</div>
 
 <div id="panel" hidden>
   <div class="card" role="dialog" aria-label="Ajustes">
@@ -78,8 +78,9 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
     <div class="row"><label for="sfxVol">Volume dos efeitos</label><input id="sfxVol" type="range" min="0" max="100" value="70"><output id="sfxVolO">70</output></div>
     <button class="btn" id="sfxTest" type="button" style="flex:none;width:100%;margin:2px 0 6px">Testar som da expressão atual</button>
     <label class="toggle"><span>Modo automático (troca sozinho; desliga ao trocar na mão)</span><input id="autoOn" type="checkbox"></label>
-    <label class="toggle"><span>Câmera detecta movimento (cabeçada pro lado no computador; girar o aparelho de repente no tablet/celular)</span><input id="camOn" type="checkbox"></label>
-    <div class="row sel"><label for="camModo">O que se mexe</label><select id="camModo"><option value="auto">Automático (PC = cabeça, toque = aparelho)</option><option value="cabeca">Cabeça de quem está na frente (PC)</option><option value="aparelho">O aparelho (tablet/celular)</option></select></div>
+    <label class="toggle"><span>Deslizar o dedo pro lado na tela troca de cara (pra direita = próxima, pra esquerda = anterior; arrastar devagar move os olhos)</span><input id="swipeOn" type="checkbox" checked></label>
+    <label class="toggle"><span>Câmera detecta movimento (cabeçada pro lado no computador; mão passando na frente; girar o aparelho de repente no tablet/celular)</span><input id="camOn" type="checkbox"></label>
+    <div class="row sel"><label for="camModo">O que se mexe</label><select id="camModo"><option value="auto">Automático (PC = cabeça, toque = aparelho)</option><option value="cabeca">Cabeça de quem está na frente (PC)</option><option value="mao">A mão passando na frente da câmera</option><option value="aparelho">O aparelho (tablet/celular)</option></select></div>
     <div class="row sel"><label for="camFace">Qual câmera</label><select id="camFace"><option value="user">Frontal (da tela)</option><option value="environment">Traseira</option></select></div>
     <div class="row"><label for="camF">Sensibilidade</label><input id="camF" type="range" min="1" max="10" value="5"><output id="camFO">5</output></div>
     <div class="meter" title="Movimento visto pela câmera agora"><div id="camBar"></div><div id="camThr"></div></div>
@@ -104,7 +105,7 @@ const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
 const COLS=30;
 let ROWS=19,W=0,H=0,dpr=1;
 
-const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,falarNome:false,camOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
+const S={bright:100,gap:22,mic:5,limiar:0,autoT:8,sfxVol:70,micOn:false,sfxOn:true,falarNome:false,swipeOn:true,camOn:false,camModo:'auto',camFace:'user',camF:5,camInv:false,lista:null,autoOn:false,blinkOn:true,expr:0};
 try{Object.assign(S,JSON.parse(localStorage.getItem('homemtela')||'{}'))}catch(e){}
 if(S.shakeOn){S.camOn=true;}delete S.shakeOn;delete S.shakeF;   // versão antiga usava o acelerômetro; agora é a câmera
 function save(){try{localStorage.setItem('homemtela',JSON.stringify(S))}catch(e){}}
@@ -596,8 +597,12 @@ cv.addEventListener('pointermove',ev=>{
  if(arrastou)olharPara(ev.clientX,ev.clientY);
 });
 cv.addEventListener('pointerup',ev=>{
- p0=null;dedo=null;
- if(arrastou){arrastou=false;return;}
+ const q0=p0;p0=null;dedo=null;
+ if(arrastou){arrastou=false;
+  // deslizada rápida pro lado (menos de meio segundo, mais de 12% da largura, mais pro lado que pra cima/baixo) troca de cara; arrastar devagar só move os olhos
+  const dx=ev.clientX-q0[0],dy=ev.clientY-q0[1];
+  if(S.swipeOn&&started&&ev.timeStamp-pressT<500&&Math.abs(dx)>W*0.12&&Math.abs(dx)>Math.abs(dy)*1.5){if(dx>0)next();else back();}
+  return;}
  if(!pressTimer)return;clearTimeout(pressTimer);pressTimer=null;
  if(!started){started=true;hint.classList.add('gone');goFull();if(S.micOn)startMic();return;}
  if(ev.clientX>W/2)next();else back();
@@ -657,7 +662,7 @@ function camAnalisa(t){
  if(firme&&Math.abs(sx)>=lim&&Math.abs(sx)>Math.abs(sy)*1.2&&t-camDirAt>900){
   camDirAt=t;camHist.length=0;
   // sinal: cabeça na frente da câmera frontal anda pro lado oposto da imagem; aparelho girando arrasta a cena ao contrário; câmera traseira inverte de novo
-  const sinal=(camModoVisto==='cabeca'?-1:1)*(S.camFace==='environment'?-1:1)*(S.camInv?-1:1);
+  const sinal=(camModoVisto==='aparelho'?1:-1)*(S.camFace==='environment'?-1:1)*(S.camInv?-1:1);   // cabeça e mão: quem se mexe está na frente da câmera; aparelho: a cena inteira arrasta ao contrário
   if(sx*sinal>0)next();else back();
   camUlt=sx*sinal>0?'→ próxima':'← anterior';
   camDirEl.textContent=sx*sinal>0?'→':'←';camDirEl.classList.add('on');setTimeout(()=>{camDirEl.classList.remove('on');camDirEl.textContent='·';},700);
@@ -665,7 +670,7 @@ function camAnalisa(t){
  if(!panel.hidden){
   camVctx.drawImage(camCv,0,0);
   camVctx.fillStyle='rgba(255,210,63,.55)';for(let i=0;i<mask.length;i++)if(mask[i])camVctx.fillRect(i%CW,(i/CW)|0,1,1);
-  camInfo.textContent='Modo: '+(camModoVisto==='cabeca'?'cabeça':'aparelho')+(S.camModo==='auto'?' (automático)':'')+(camUlt?' · última: '+camUlt:'')+(dx?' · '+(dx>0?'→':'←')+Math.abs(dx):'');
+  camInfo.textContent='Modo: '+(camModoVisto==='cabeca'?'cabeça':camModoVisto==='mao'?'mão':'aparelho')+(S.camModo==='auto'?' (automático)':'')+(camUlt?' · última: '+camUlt:'')+(dx?' · '+(dx>0?'→':'←')+Math.abs(dx):'');
  }
  if(!camPrev)camPrev=new Float32Array(CW*CH);
  camPrev.set(cur);
@@ -728,7 +733,7 @@ bindCheck('sfxOn','sfxOn',()=>{if(S.sfxOn){sfxAC();if(!S.micOn){S.micOn=true;doc
 bindRange('sfxVol','sfxVol',v=>v);
 document.getElementById('sfxTest').onclick=()=>{sfxUntil=performance.now()+playSfx(EXPR[cur])+300;};
 bindCheck('autoOn','autoOn',()=>{autoAt=performance.now()});
-bindCheck('blinkOn','blinkOn');bindCheck('falarNome','falarNome');
+bindCheck('blinkOn','blinkOn');bindCheck('falarNome','falarNome');bindCheck('swipeOn','swipeOn');
 bindCheck('camOn','camOn',()=>{if(S.camOn)startCam();else stopCam();});
 bindRange('camF','camF',v=>v);
 bindCheck('camInv','camInv');
