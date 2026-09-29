@@ -74,7 +74,7 @@ kbd{font:11px/1 ui-monospace,monospace;background:#1e2329;border:1px solid #2c32
 
     <label class="toggle"><span>Boca segue a voz (microfone)</span><input id="micOn" type="checkbox"></label>
     <p class="sub" id="micErr" hidden style="color:#ff6b6b">Sem acesso ao microfone. Libere a permissão no navegador.</p>
-    <label class="toggle"><span>IA filtra sons: só a voz mexe a boca (ignora música, ventilador, barulho de fundo; baixa ~5 MB na primeira vez)</span><input id="vozOn" type="checkbox"></label>
+    <label class="toggle"><span>IA filtra sons: fecha a boca quando o som não é voz (música, ventilador, barulho de fundo; baixa ~5 MB na primeira vez)</span><input id="vozOn" type="checkbox"></label>
     <div class="row"><label for="vozC">Confiança mínima</label><input id="vozC" type="range" min="5" max="80" value="25"><output id="vozCO">25%</output></div>
     <p class="sub" id="vozInfo" style="margin:-2px 0 8px">Desligado.</p>
     <label class="toggle"><span>Efeitos sonoros (falar faz um barulho que muda com a expressão)</span><input id="sfxOn" type="checkbox"></label>
@@ -480,7 +480,8 @@ function frame(t){
  if(transT<1)transT=Math.min(1,transT+dt/0.22);
  const e=EXPR[cur];
  let open=0;
- if(S.micOn&&(!S.vozOn||vozAte>t)){const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
+ // a boca abre pelo volume na hora; a IA (vozVeto) só segura quando tem certeza de que o som não é voz
+ if(S.micOn&&(!S.vozOn||t>vozVeto)){const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
  else mouthK=0;
  if(S.sfxOn&&S.micOn){
   if(open===0){if(!quietAt)quietAt=t;}
@@ -541,12 +542,15 @@ async function startMic(){
 }
 // ---- IA que filtra sons ----
 // YAMNet (MediaPipe AudioClassifier) ouve ~1 s de cada vez e diz o que é aquele som entre 521 tipos.
-// Só os tipos de voz humana liberam a boca; música, ventilador, teclado, carro e afins ficam de fora.
+// A boca abre pelo volume sem esperar a IA (senão atrasa mais de 1 s no tablet). A IA só VETA: quando o último
+// segundo foi claramente outra coisa (música, ventilador, teclado, carro) e não voz, segura a boca por ~1 s.
+// Silêncio não veta (o volume já cuida disso), então começar a falar numa sala quieta responde na hora.
+// O intervalo entre análises se adapta ao aparelho: nunca mais de 1/3 do tempo do processador nisso.
 // O modelo (~5 MB) vem do CDN na primeira vez e depois fica guardado pelo service worker.
 const MPA='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-audio@0.10.14',MPAMODEL='https://storage.googleapis.com/mediapipe-models/audio_classifier/yamnet/float32/1/yamnet.tflite';
 const VOZ=['speech','child speech','conversation','narration','monologue','babbling','speech synthesizer','shout','bellow','whoop','yell','battle cry','children shouting','screaming','whispering','laughter','baby laughter','giggle','snicker','belly laugh','chuckle','crying','baby cry','whimper','wail','singing','choir','yodeling','chant','mantra','male singing','female singing','child singing','rapping','humming','groan','grunt','sigh','male speech','female speech'];
 const vozInfo=document.getElementById('vozInfo');
-let som=null,somLoading=false,somBuf=null,somPos=0,somSR=0,somNode=null,somZero=null,somTimer=0,vozAte=0,vozNome='';
+let som=null,somLoading=false,somBuf=null,somPos=0,somSR=0,somNode=null,somZero=null,somTimer=0,vozAte=0,vozVeto=0,vozNome='';
 async function loadSom(){
  if(som||somLoading)return;
  somLoading=true;vozInfo.textContent='Baixando a IA de som…';
@@ -574,12 +578,13 @@ function ligarSom(){
  };
  somZero=audio.createGain();somZero.gain.value=0;
  micSrc.connect(somNode);somNode.connect(somZero);somZero.connect(audio.destination);   // precisa chegar na saída pra rodar, mas com volume zero
- somTimer=setInterval(ouvirSom,400);
+ agendarSom(400);
 }
+function agendarSom(ms){somTimer=setTimeout(()=>{somTimer=0;if(!somNode)return;const t0=performance.now();ouvirSom();agendarSom(Math.max(400,(performance.now()-t0)*3));},ms);}
 function desligarSom(){
- if(somTimer){clearInterval(somTimer);somTimer=0;}
+ if(somTimer){clearTimeout(somTimer);somTimer=0;}
  if(somNode){somNode.onaudioprocess=null;try{somNode.disconnect();somZero.disconnect();}catch(e){}somNode=null;somZero=null;}
- vozAte=0;vozNome='';
+ vozAte=0;vozVeto=0;vozNome='';
 }
 function ouvirSom(){
  if(!som||!somNode)return;
@@ -591,8 +596,10 @@ function ouvirSom(){
  if(!cs||!cs.categories||!cs.categories.length)return;
  const lim=S.vozC/100;let melhor=cs.categories[0],voz=null;
  for(const c of cs.categories)if(VOZ.includes((c.categoryName||'').toLowerCase())&&c.score>=lim&&(!voz||c.score>voz.score))voz=c;
- if(voz){vozAte=t+900;vozNome=voz.categoryName+' '+Math.round(voz.score*100)+'%';}   // segura quase 1 s: a fala tem pausas entre as palavras
- if(!panel.hidden)vozInfo.textContent=(vozAte>t?'✓ voz: '+vozNome:'✗ '+(melhor.categoryName||'?')+' '+Math.round(melhor.score*100)+'% (boca parada)');
+ const tipo=(melhor.categoryName||'?'),silencio=/silence/i.test(tipo);
+ if(voz){vozAte=t+900;vozVeto=0;vozNome=voz.categoryName+' '+Math.round(voz.score*100)+'%';}   // vale quase 1 s: a fala tem pausas entre as palavras
+ else if(t>vozAte&&!silencio)vozVeto=t+1000;   // som que não é voz: segura a boca até a próxima análise dizer outra coisa
+ if(!panel.hidden)vozInfo.textContent=(vozAte>t?'✓ voz: '+vozNome:(vozVeto>t?'✗ ':'· ')+tipo+' '+Math.round(melhor.score*100)+'%'+(vozVeto>t?' (boca parada)':' (boca pelo volume)'));
 }
 
 // em segundo plano a IA para de ouvir (não gasta bateria à toa)
