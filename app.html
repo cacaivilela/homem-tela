@@ -463,8 +463,13 @@ let blink=0,nextBlink=performance.now()+2500,blinkStart=0;
 let driftX=0,driftY=0,driftTX=0,driftTY=0,nextDrift=0,dedo=null;
 let level=0,mouthK=0,autoAt=performance.now();
 let lastT=performance.now();
+// desenho fixo em 30 quadros por segundo: pula os quadros da tela que caem antes de 1/30 s (economiza bateria e processador no tablet)
+const FPS=30,QUADRO=1000/FPS;let ultimoDesenho=0;
 
 function frame(t){
+ requestAnimationFrame(frame);
+ if(t-ultimoDesenho<QUADRO-2)return;
+ ultimoDesenho=t-((t-ultimoDesenho)%QUADRO);
  const dt=Math.min(.05,(t-lastT)/1000);lastT=t;
  if(S.blinkOn&&t>nextBlink){blinkStart=t;nextBlink=t+2500+Math.random()*3500;}
  const bt=(t-blinkStart)/220;blink=bt<1?Math.sin(bt*Math.PI):0;
@@ -485,7 +490,6 @@ function frame(t){
  const g=build(e,blink,open,Math.round(driftX),Math.round(driftY),t);
  draw(g,prev,transT);
  if(!panel.hidden){meterBar.style.width=(level*100)+'%';meterThr.style.left=S.limiar+'%';camBar.style.width=Math.min(100,camMag/camLimiar()*50)+'%';camThr.style.left='50%';}
- requestAnimationFrame(frame);
 }
 function draw(cg,pg,tt){
  ctx.setTransform(dpr,0,0,dpr,0,0);
