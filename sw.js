@@ -1,5 +1,5 @@
-const CACHE='homem-tela-v21';
-const FILES=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const CACHE='homem-tela-v22';
+const FILES=['./','./index.html','./app.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 // IA (MediaPipe + modelos, ~49 MB): cache próprio que não muda junto com o site, pra não baixar tudo de novo a cada versão.
 // Só troca o nome se trocar a versão da biblioteca em lib/.
 const LIB='homem-tela-lib-0.10.14';
@@ -22,5 +22,9 @@ self.addEventListener('fetch',e=>{
  // Internet lenta ou nenhuma não atrasa a abertura; sem nada guardado ainda, espera a rede.
  const rede=fetch(e.request).then(r=>{if(r.ok){const cp=r.clone();caches.open(CACHE).then(c=>c.put(e.request,cp));}return r;});
  e.waitUntil(rede.catch(()=>{}));
- e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(r=>r||rede.catch(()=>caches.match('./index.html'))));
+ // Wi-Fi ligado sem internet deixa a rede pendurada em vez de falhar: abrindo a página, desiste em 3 s e mostra o rosto guardado
+ const pagina=e.request.mode==='navigate';
+ // e se a rede responder com erro (página que não existe, portal de login do Wi-Fi com erro), também mostra o rosto
+ const espera=pagina?Promise.race([rede.then(r=>r.ok?r:Promise.reject()),new Promise((_,no)=>setTimeout(no,3000))]):rede;
+ e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(r=>r||espera.catch(()=>caches.match('./index.html'))));
 });
