@@ -465,7 +465,9 @@ const FPS=30,QUADRO=1000/FPS;let ultimoDesenho=0;
 
 function frame(t){
  requestAnimationFrame(frame);
- if(t-ultimoDesenho<QUADRO-2)return;
+ lerMic(t);
+ // a boca não espera o próximo quadro de 1/30 s: se o volume mudou a abertura, desenha já
+ if(t-ultimoDesenho<QUADRO-2&&aberturaMic()===mouthK)return;
  ultimoDesenho=t-((t-ultimoDesenho)%QUADRO);
  const dt=Math.min(.05,(t-lastT)/1000);lastT=t;
  if(S.blinkOn&&t>nextBlink){blinkStart=t;nextBlink=t+2500+Math.random()*3500;}
@@ -477,11 +479,18 @@ function frame(t){
  const e=EXPR[cur];
  let open=0;
  // a boca abre pelo volume na hora; a IA (vozVeto) só segura quando tem certeza de que o som não é voz
- if(S.micOn&&(!S.vozOn||t>vozVeto)){const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;mouthK=open;}
+ if(S.micOn&&(!S.vozOn||t>vozVeto))open=mouthK=aberturaMic();
  else mouthK=0;
  const g=build(e,blink,open,Math.round(driftX),Math.round(driftY),t);
  draw(g,prev,transT);
  if(!panel.hidden){meterBar.style.width=(level*100)+'%';meterThr.style.left=S.limiar+'%';camBar.style.width=Math.min(100,camMag/camLimiar()*50)+'%';camThr.style.left='50%';}
+}
+// abertura da boca (0 a 3) pelo volume; pra fechar um degrau o som precisa cair um pouco abaixo do limite de abrir (não pisca)
+function aberturaMic(){
+ if(!S.micOn||(S.vozOn&&performance.now()<=vozVeto))return 0;
+ const th=S.limiar/100,lv=Math.max(0,level-th)/(1-th);let open=lv>0.62?3:lv>0.32?2:lv>0.1?1:0;
+ if(open<mouthK&&lv>[0,0.06,0.24,0.5][mouthK])open=mouthK;
+ return open;
 }
 // ---- desenho rápido ----
 // Antes cada célula era um caminho arredondado preenchido, todo quadro (até 2 mil por quadro nos emojis).
@@ -534,7 +543,17 @@ function draw(cg,pg,tt){
 
 requestAnimationFrame(frame);
 
-let analyser=null,buf=null,micStarting=false,micSrc=null;
+let analyser=null,buf=null,micStarting=false,micSrc=null,micFloor=0.02,micLast=0;
+// lê o volume do microfone junto com cada quadro da tela (antes era um timer de 16 ms à parte, que no Android antigo atrasa)
+function lerMic(now){
+ if(!analyser)return;
+ const dt=Math.min(.1,(now-micLast)/1000);micLast=now;
+ analyser.getFloatTimeDomainData(buf);let s=0;for(let i=0;i<buf.length;i++)s+=buf[i]*buf[i];const rms=Math.sqrt(s/buf.length);
+ micFloor+=(rms-micFloor)*(rms<micFloor?0.05:0.002);
+ const sig=Math.max(0,rms-micFloor*2.5),gain=S.mic*S.mic*1.4;
+ const target=Math.min(1,sig*gain);
+ if(target>level)level=target;else level=Math.max(target,level-dt*7);
+}
 async function startMic(){
  if(analyser||micStarting){ensureAudio();return;}
  micStarting=true;
@@ -547,17 +566,7 @@ async function startMic(){
   ensureAudio();
   const src=micSrc=audio.createMediaStreamSource(stream);analyser=audio.createAnalyser();analyser.fftSize=256;src.connect(analyser);buf=new Float32Array(analyser.fftSize);
   if(S.vozOn){if(som)ligarSom();else loadSom();}
-  let floor=0.02,last=performance.now();
-  (function poll(){
-   if(!analyser)return;
-   const now=performance.now(),dt=Math.min(.1,(now-last)/1000);last=now;
-   analyser.getFloatTimeDomainData(buf);let s=0;for(let i=0;i<buf.length;i++)s+=buf[i]*buf[i];const rms=Math.sqrt(s/buf.length);
-   floor+=(rms-floor)*(rms<floor?0.05:0.002);
-   const sig=Math.max(0,rms-floor*2.5),gain=S.mic*S.mic*1.4;
-   const target=Math.min(1,sig*gain);
-   if(target>level)level=target;else level=Math.max(target,level-dt*7);
-   setTimeout(poll,16);
-  })();
+  micFloor=0.02;micLast=performance.now();
  }catch(err){
   S.micOn=false;document.getElementById('micOn').checked=false;save();
   const el=document.getElementById('micErr');el.hidden=false;
@@ -851,6 +860,10 @@ bindSelect('camFace','camFace',()=>{if(S.camOn){stopCam();startCam();}});
 if(S.vozOn&&S.micOn)loadSom();
 if(S.camOn||S.apontaOn)startCam();if(S.apontaOn)loadHand();
 document.addEventListener('visibilitychange',()=>{if(!S.camOn&&!S.apontaOn)return;if(document.hidden)stopCam();else startCam();});   // não deixa a câmera ligada com o app em segundo plano
-if('serviceWorker'in navigator){window.addEventListener('load',()=>{navigator.serviceWorker.register('sw.js').catch(()=>{})});}
+if('serviceWorker'in navigator){window.addEventListener('load',()=>{
+ navigator.serviceWorker.register('sw.js').catch(()=>{});
+ // Pede pro service worker baixar a IA em segundo plano (continua de onde parou se a internet caiu antes).
+ navigator.serviceWorker.ready.then(reg=>{if(reg.active)reg.active.postMessage('guardaLib');}).catch(()=>{});
+});}
 })();
 </script>
